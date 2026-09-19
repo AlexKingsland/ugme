@@ -22,16 +22,19 @@ export default function App() {
     <AppProvider isEmbeddedApp apiKey={apiKey}>
       <NavMenu>
         <Link to="/app" rel="home">
-          Home
+          Dashboard
         </Link>
-        <Link to="/app/additional">Additional page</Link>
+        <Link to="/app/campaigns">Campaigns</Link>
+        <Link to="/app/submissions">Submissions</Link>
+        <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>
   );
 }
 
-// Shopify needs Remix to catch some thrown responses, so that their headers are included in the response.
+// Shopify needs Remix to catch some thrown responses, so that their
+// temporary redirects work correctly.
 export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }

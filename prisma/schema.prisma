@@ -79,6 +79,8 @@ model Shop {
   shopDomain           String               @unique
   accessToken          String
   subscriptionProvider SubscriptionProvider  @default(SHOPIFY_NATIVE)
+  providerApiKey       String?              // encrypted API key for ReCharge etc
+  providerConnected    Boolean              @default(false)
   providerConfig       String               @default("{}") // JSON stored as string for SQLite
   defaultRewardMonths  Int                  @default(1)
   brandName            String?

@@ -19,6 +19,7 @@ async function seed() {
       shopDomain: "ugme-demo.myshopify.com",
       accessToken: "shpat_fake_token_for_development",
       subscriptionProvider: "SHOPIFY_NATIVE",
+      providerConnected: true,
       defaultRewardMonths: 1,
       brandName: "UGME Demo Store",
       logoUrl: null,
