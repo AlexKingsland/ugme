@@ -16,8 +16,8 @@ import {
   Button,
   Banner,
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import { authenticate } from "../../shopify.server";
+import prisma from "../../db.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   await authenticate.admin(request);

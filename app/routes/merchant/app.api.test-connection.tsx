@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
+import { authenticate } from "../../shopify.server";
 
 /**
  * Tests the connection to the selected subscription provider.

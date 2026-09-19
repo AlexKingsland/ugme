@@ -21,8 +21,8 @@ import {
   CalloutCard,
 } from "@shopify/polaris";
 import { useState, useCallback, useEffect } from "react";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import { authenticate } from "../../shopify.server";
+import prisma from "../../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
