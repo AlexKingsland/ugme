@@ -1,0 +1,186 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+// Shopify session storage (required by @shopify/shopify-app-session-storage-prisma)
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// ─── UGME Models ───────────────────────────────────────────────
+
+enum SubscriptionProvider {
+  RECHARGE
+  SHOPIFY_NATIVE
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  PAUSED
+}
+
+enum SubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FLAGGED
+}
+
+enum ContentType {
+  PHOTO
+  VIDEO
+}
+
+enum RewardStatus {
+  CREATED
+  APPLIED
+  FAILED
+}
+
+enum EmailType {
+  MAGIC_LINK
+  SUBMISSION_RECEIVED
+  SUBMISSION_APPROVED
+  SUBMISSION_REJECTED
+  CAMPAIGN_INVITE
+}
+
+model Shop {
+  id                   String               @id @default(cuid())
+  shopDomain           String               @unique
+  accessToken          String
+  subscriptionProvider SubscriptionProvider  @default(SHOPIFY_NATIVE)
+  providerConfig       String               @default("{}") // JSON stored as string for SQLite
+  defaultRewardMonths  Int                  @default(1)
+  brandName            String?
+  logoUrl              String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  campaigns            Campaign[]
+  customers            Customer[]
+}
+
+model Campaign {
+  id               String         @id @default(cuid())
+  shopId           String
+  title            String
+  status           CampaignStatus @default(DRAFT)
+  moment           String         // The creative/contextual ask
+  captureSpecs     String         @default("[]") // JSON array of spec objects
+  rewardMonths     Int            @default(1)
+  startDate        DateTime?
+  endDate          DateTime?
+  maxSubmissions   Int?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  shop             Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  submissions      Submission[]
+
+  @@index([shopId])
+  @@index([status])
+}
+
+model Customer {
+  id                  String             @id @default(cuid())
+  shopId              String
+  email               String
+  shopifyCustomerId   String?
+  subscriptionId      String?
+  subscriptionStatus  SubscriptionStatus @default(ACTIVE)
+  magicLinkToken      String?
+  magicLinkExpiresAt  DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  shop                Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  submissions         Submission[]
+  rewards             Reward[]
+  emailLogs           EmailLog[]
+
+  @@unique([shopId, email])
+  @@index([shopId])
+  @@index([magicLinkToken])
+}
+
+model Submission {
+  id            String           @id @default(cuid())
+  campaignId    String
+  customerId    String
+  status        SubmissionStatus @default(PENDING)
+  contentType   ContentType      @default(PHOTO)
+  contentUrl    String
+  thumbnailUrl  String?
+  reviewedAt    DateTime?
+  reviewNote    String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  campaign      Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reward        Reward?
+
+  @@index([campaignId])
+  @@index([customerId])
+  @@index([status])
+}
+
+model Reward {
+  id                 String               @id @default(cuid())
+  submissionId       String               @unique
+  customerId         String
+  months             Int
+  discountProvider   SubscriptionProvider
+  externalDiscountId String?
+  appliedAt          DateTime?
+  status             RewardStatus         @default(CREATED)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  submission         Submission           @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  customer           Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model EmailLog {
+  id          String    @id @default(cuid())
+  customerId  String
+  type        EmailType
+  sentAt      DateTime  @default(now())
+  metadata    String    @default("{}") // JSON stored as string for SQLite
+
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
