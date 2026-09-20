@@ -66,6 +66,12 @@ enum DiscountType {
   PERCENTAGE
 }
 
+enum StorageTier {
+  TIER_10GB
+  TIER_100GB
+  TIER_1TB
+}
+
 enum RewardStatus {
   CREATED
   APPLIED
@@ -89,6 +95,7 @@ model Shop {
   providerConnected    Boolean              @default(false)
   providerConfig       String               @default("{}") // JSON stored as string for SQLite
   defaultRewardMonths  Int                  @default(1)
+  storageTier          StorageTier          @default(TIER_10GB)
   brandName            String?
   logoUrl              String?
   createdAt            DateTime             @default(now())
@@ -152,6 +159,7 @@ model Submission {
   contentType   ContentType      @default(PHOTO)
   contentUrl    String
   thumbnailUrl  String?
+  fileBytes     Int            @default(0)
   reviewedAt    DateTime?
   reviewNote    String?
   createdAt     DateTime         @default(now())

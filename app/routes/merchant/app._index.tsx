@@ -16,10 +16,25 @@ import {
   InlineGrid,
   Divider,
   Banner,
+  ProgressBar,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
+
+const TIER_LIMITS: Record<string, { bytes: number; label: string }> = {
+  TIER_10GB:  { bytes: 10 * 1024 * 1024 * 1024,   label: "10 GB" },
+  TIER_100GB: { bytes: 100 * 1024 * 1024 * 1024,  label: "100 GB" },
+  TIER_1TB:   { bytes: 1024 * 1024 * 1024 * 1024,  label: "1 TB" },
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -29,27 +44,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   if (!shop) {
-    // Return empty state for shops that haven't completed setup
     return json({
       stats: { activeCampaigns: 0, totalSubmissions: 0, pendingReview: 0, rewardsApplied: 0 },
       recentSubmissions: [],
       activeCampaigns: [],
       shopExists: false,
       providerConnected: false,
+      storage: { usedBytes: 0, tier: "TIER_10GB" },
     });
   }
 
-  const [activeCampaigns, totalSubmissions, pendingReview, rewardsApplied] =
+  const [activeCampaigns, totalSubmissions, pendingReview, rewardsApplied, storageAgg] =
     await Promise.all([
       prisma.campaign.count({ where: { shopId: shop.id, status: "ACTIVE" } }),
-      prisma.submission.count({
+      prisma.submission.count({ where: { campaign: { shopId: shop.id } } }),
+      prisma.submission.count({ where: { campaign: { shopId: shop.id }, status: "PENDING" } }),
+      prisma.reward.count({ where: { customer: { shopId: shop.id }, status: "APPLIED" } }),
+      prisma.submission.aggregate({
         where: { campaign: { shopId: shop.id } },
-      }),
-      prisma.submission.count({
-        where: { campaign: { shopId: shop.id }, status: "PENDING" },
-      }),
-      prisma.reward.count({
-        where: { customer: { shopId: shop.id }, status: "APPLIED" },
+        _sum: { fileBytes: true },
       }),
     ]);
 
@@ -65,9 +78,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const campaigns = await prisma.campaign.findMany({
     where: { shopId: shop.id, status: "ACTIVE" },
-    include: {
-      _count: { select: { submissions: true } },
-    },
+    include: { _count: { select: { submissions: true } } },
     orderBy: { createdAt: "desc" },
     take: 3,
   });
@@ -78,6 +89,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     activeCampaigns: campaigns,
     shopExists: true,
     providerConnected: shop.providerConnected,
+    storage: {
+      usedBytes: storageAgg._sum.fileBytes || 0,
+      tier: shop.storageTier,
+    },
   });
 };
 
@@ -85,16 +100,51 @@ function StatCard({ title, value, helpText }: { title: string; value: number; he
   return (
     <Card>
       <BlockStack gap="100">
-        <Text as="p" variant="bodyMd" tone="subdued">
-          {title}
-        </Text>
-        <Text as="p" variant="headingXl">
-          {value}
-        </Text>
-        {helpText && (
+        <Text as="p" variant="bodyMd" tone="subdued">{title}</Text>
+        <Text as="p" variant="headingXl">{value}</Text>
+        {helpText && <Text as="p" variant="bodySm" tone="subdued">{helpText}</Text>}
+      </BlockStack>
+    </Card>
+  );
+}
+
+function StorageCard({ usedBytes, tier }: { usedBytes: number; tier: string }) {
+  const tierInfo = TIER_LIMITS[tier] || TIER_LIMITS.TIER_10GB;
+  const pct = Math.min((usedBytes / tierInfo.bytes) * 100, 100);
+  const isHigh = pct >= 80;
+  const isCritical = pct >= 95;
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingMd">Storage</Text>
+          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>
+            {tierInfo.label} plan
+          </Badge>
+        </InlineStack>
+
+        <ProgressBar
+          progress={pct}
+          tone={isCritical ? "critical" : isHigh ? "highlight" : "primary"}
+          size="small"
+        />
+
+        <InlineStack align="space-between">
           <Text as="p" variant="bodySm" tone="subdued">
-            {helpText}
+            {formatBytes(usedBytes)} used
           </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {formatBytes(tierInfo.bytes - usedBytes)} remaining
+          </Text>
+        </InlineStack>
+
+        {isHigh && (
+          <Banner tone={isCritical ? "critical" : "warning"}>
+            {isCritical
+              ? "You're almost out of storage. Upgrade your plan to keep accepting submissions."
+              : "Storage is getting full. Consider upgrading to avoid disruptions."}
+          </Banner>
         )}
       </BlockStack>
     </Card>
@@ -103,58 +153,44 @@ function StatCard({ title, value, helpText }: { title: string; value: number; he
 
 function statusBadge(status: string) {
   switch (status) {
-    case "PENDING":
-      return <Badge tone="attention">Pending</Badge>;
-    case "APPROVED":
-      return <Badge tone="success">Approved</Badge>;
-    case "REJECTED":
-      return <Badge tone="critical">Rejected</Badge>;
-    case "FLAGGED":
-      return <Badge tone="warning">Flagged</Badge>;
-    default:
-      return <Badge>{status}</Badge>;
+    case "PENDING":  return <Badge tone="attention">Pending</Badge>;
+    case "APPROVED": return <Badge tone="success">Approved</Badge>;
+    case "REJECTED": return <Badge tone="critical">Rejected</Badge>;
+    case "FLAGGED":  return <Badge tone="warning">Flagged</Badge>;
+    default:         return <Badge>{status}</Badge>;
   }
 }
 
 export default function Dashboard() {
-  const { stats, recentSubmissions, activeCampaigns, shopExists, providerConnected } =
+  const { stats, recentSubmissions, activeCampaigns, shopExists, providerConnected, storage } =
     useLoaderData<typeof loader>();
 
   return (
     <Page>
       <TitleBar title="UGME Dashboard" />
-      {!providerConnected && (
-        <Banner
-          title="Connect your subscription provider"
-          tone="warning"
-          action={{ content: "Go to Settings", url: "/app/settings" }}
-        >
-          <p>
-            UGME needs access to your subscription platform to apply discount
-            rewards. Connect your provider in Settings to start creating campaigns.
-          </p>
-        </Banner>
-      )}
       <BlockStack gap="500">
+        {!providerConnected && (
+          <Banner
+            title="Connect your subscription provider"
+            tone="warning"
+            action={{ content: "Go to Settings", url: "/app/settings" }}
+          >
+            <p>
+              UGME needs access to your subscription platform to apply discount
+              rewards. Connect your provider in Settings to start creating campaigns.
+            </p>
+          </Banner>
+        )}
         {/* Stats Row */}
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-          <StatCard
-            title="Active Campaigns"
-            value={stats.activeCampaigns}
-          />
-          <StatCard
-            title="Total Submissions"
-            value={stats.totalSubmissions}
-          />
-          <StatCard
-            title="Pending Review"
-            value={stats.pendingReview}
-          />
-          <StatCard
-            title="Rewards Applied"
-            value={stats.rewardsApplied}
-          />
+          <StatCard title="Active Campaigns" value={stats.activeCampaigns} />
+          <StatCard title="Total Submissions" value={stats.totalSubmissions} />
+          <StatCard title="Pending Review" value={stats.pendingReview} />
+          <StatCard title="Rewards Applied" value={stats.rewardsApplied} />
         </InlineGrid>
+
+        {/* Storage bar */}
+        <StorageCard usedBytes={storage.usedBytes} tier={storage.tier} />
 
         <Layout>
           {/* Recent Submissions */}
@@ -162,9 +198,7 @@ export default function Dashboard() {
             <Card>
               <BlockStack gap="400">
                 <InlineStack align="space-between">
-                  <Text as="h2" variant="headingMd">
-                    Recent Submissions
-                  </Text>
+                  <Text as="h2" variant="headingMd">Recent Submissions</Text>
                   <Link to="/app/submissions">View all</Link>
                 </InlineStack>
                 {recentSubmissions.length === 0 ? (
@@ -213,15 +247,11 @@ export default function Dashboard() {
             <Card>
               <BlockStack gap="400">
                 <InlineStack align="space-between">
-                  <Text as="h2" variant="headingMd">
-                    Active Campaigns
-                  </Text>
+                  <Text as="h2" variant="headingMd">Active Campaigns</Text>
                   <Link to="/app/campaigns">View all</Link>
                 </InlineStack>
                 {activeCampaigns.length === 0 ? (
-                  <Text as="p" tone="subdued">
-                    No active campaigns.
-                  </Text>
+                  <Text as="p" tone="subdued">No active campaigns.</Text>
                 ) : (
                   <BlockStack gap="300">
                     {activeCampaigns.map((campaign: any) => (
@@ -241,18 +271,13 @@ export default function Dashboard() {
                             </InlineStack>
                           </BlockStack>
                         </Link>
-                        <Box paddingBlockStart="300">
-                          <Divider />
-                        </Box>
+                        <Box paddingBlockStart="300"><Divider /></Box>
                       </Box>
                     ))}
                   </BlockStack>
                 )}
-
                 <Box paddingBlockStart="200">
-                  <Link to="/app/campaigns/new">
-                    Create campaign
-                  </Link>
+                  <Link to="/app/campaigns/new">Create campaign</Link>
                 </Box>
               </BlockStack>
             </Card>
@@ -261,9 +286,7 @@ export default function Dashboard() {
               <Box paddingBlockStart="400">
                 <Card>
                   <BlockStack gap="200">
-                    <Text as="h2" variant="headingMd">
-                      Get Started
-                    </Text>
+                    <Text as="h2" variant="headingMd">Get Started</Text>
                     <Text as="p" variant="bodyMd">
                       Configure your subscription provider and brand settings to start collecting content.
                     </Text>
