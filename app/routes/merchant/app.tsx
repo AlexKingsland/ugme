@@ -36,7 +36,7 @@ export default function App() {
           Dashboard
         </Link>
         <Link to="/app/campaigns">Campaigns</Link>
-        <Link to="/app/submissions">Submissions</Link>
+        <Link to="/app/library">Library</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />

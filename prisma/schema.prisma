@@ -160,6 +160,12 @@ model Submission {
   contentUrl    String
   thumbnailUrl  String?
   fileBytes     Int            @default(0)
+  durationSecs  Int?
+  description   String?
+  markedUsed    Boolean        @default(false)
+  usageTags     String         @default("[]")
+  rightsAccepted Boolean       @default(false)
+  rejectionReason String?
   reviewedAt    DateTime?
   reviewNote    String?
   createdAt     DateTime         @default(now())
