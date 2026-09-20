@@ -42,7 +42,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       shop: { select: { shopDomain: true } },
       submissions: {
         include: {
-          customer: { select: { email: true, firstName: true, lastName: true } },
+          customer: { select: { email: true } },
           reward: { select: { status: true, months: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -117,9 +117,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     submissions: campaign.submissions.map((s) => ({
       id: s.id,
       customerEmail: s.customer.email,
-      customerName: [s.customer.firstName, s.customer.lastName]
-        .filter(Boolean)
-        .join(" ") || s.customer.email,
+      customerName: s.customer.email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
       status: s.status,
       contentType: s.contentType,
       contentUrl: s.contentUrl,
@@ -399,16 +397,7 @@ export default function CampaignDashboard() {
                         {campaign.contentType === "VIDEO" ? "Video" : "Photo"}
                       </Badge>
                     </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span" tone="subdued">
-                        Creative moment
-                      </Text>
-                      <Box maxWidth="280px">
-                        <Text as="span" alignment="end">
-                          {campaign.moment}
-                        </Text>
-                      </Box>
-                    </InlineStack>
+
                     <InlineStack align="space-between">
                       <Text as="span" tone="subdued">
                         Reward
@@ -450,34 +439,119 @@ export default function CampaignDashboard() {
                 </BlockStack>
               </Card>
 
-              {/* Capture specs */}
-              {campaign.captureSpecs.length > 0 && (
-                <Card>
-                  <BlockStack gap="300">
-                    <Text as="h2" variant="headingMd">
-                      Capture specs
-                    </Text>
-                    <Divider />
-                    {campaign.captureSpecs.map(
-                      (
-                        spec: { label: string; description: string },
-                        i: number
-                      ) => (
-                        <InlineStack key={i} align="space-between" gap="400">
-                          <Text as="span" fontWeight="semibold">
-                            {spec.label}
-                          </Text>
-                          <Box maxWidth="280px">
-                            <Text as="span" tone="subdued" alignment="end">
-                              {spec.description}
-                            </Text>
-                          </Box>
-                        </InlineStack>
-                      )
-                    )}
-                  </BlockStack>
-                </Card>
-              )}
+              {/* Creative brief */}
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">
+                    Creative brief
+                  </Text>
+                  <Divider />
+
+                  {/* Creative moment */}
+                  {campaign.moment && (
+                    <Box
+                      padding="400"
+                      background="bg-surface-secondary"
+                      borderRadius="200"
+                    >
+                      <BlockStack gap="200">
+                        <Text as="span" variant="bodySm" fontWeight="semibold" tone="subdued">
+                          Creative moment
+                        </Text>
+                        <Text as="p" variant="bodyMd">
+                          {campaign.moment}
+                        </Text>
+                      </BlockStack>
+                    </Box>
+                  )}
+
+                  {/* Content requirements */}
+                  {campaign.captureSpecs.filter(
+                    (s: { label: string }) => s.label === "Requirement"
+                  ).length > 0 && (
+                    <BlockStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="semibold" tone="subdued">
+                        Content requirements
+                      </Text>
+                      <BlockStack gap="0">
+                        {campaign.captureSpecs
+                          .filter((s: { label: string }) => s.label === "Requirement")
+                          .map((spec: { label: string; description: string }, i: number) => (
+                            <div
+                              key={i}
+                              style={{
+                                display: "flex",
+                                alignItems: "flex-start",
+                                gap: "10px",
+                                padding: "8px 12px",
+                                background: i % 2 === 0 ? "var(--p-color-bg-surface-secondary)" : "transparent",
+                                borderRadius: "6px",
+                              }}
+                            >
+                              <span style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                width: "20px",
+                                height: "20px",
+                                minWidth: "20px",
+                                borderRadius: "6px",
+                                background: "var(--p-color-bg-surface-tertiary)",
+                                color: "var(--p-color-text-subdued)",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                marginTop: "1px",
+                              }}>
+                                {i + 1}
+                              </span>
+                              <Text as="span" variant="bodyMd">
+                                {spec.description}
+                              </Text>
+                            </div>
+                          ))}
+                      </BlockStack>
+                    </BlockStack>
+                  )}
+
+                  {/* Technical specs */}
+                  {campaign.captureSpecs.filter(
+                    (s: { label: string }) => s.label !== "Requirement"
+                  ).length > 0 && (
+                    <BlockStack gap="200">
+                      <Text as="span" variant="bodySm" fontWeight="semibold" tone="subdued">
+                        Technical specs
+                      </Text>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                          gap: "8px",
+                        }}
+                      >
+                        {campaign.captureSpecs
+                          .filter((s: { label: string }) => s.label !== "Requirement")
+                          .map((spec: { label: string; description: string }, i: number) => (
+                            <div
+                              key={i}
+                              style={{
+                                padding: "10px 12px",
+                                background: "var(--p-color-bg-surface-secondary)",
+                                borderRadius: "8px",
+                              }}
+                            >
+                              <div style={{ fontSize: "12px", color: "var(--p-color-text-subdued)", marginBottom: "2px" }}>
+                                {spec.label}
+                              </div>
+                              <div style={{ fontSize: "13px", fontWeight: 600 }}>
+                                {spec.description}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    </BlockStack>
+                  )}
+                </BlockStack>
+              </Card>
 
               {/* Recent submissions */}
               <Card>

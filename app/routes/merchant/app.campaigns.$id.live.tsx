@@ -289,24 +289,23 @@ export default function CampaignLive() {
                 </Text>
                 <Divider />
                 <BlockStack gap="200">
-                  <InlineStack gap="200" blockAlign="start">
-                    <Box>
-                      <div
-                        style={{
-                          width: "24px",
-                          height: "24px",
-                          borderRadius: "50%",
-                          background: "#e3e3e3",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                        }}
-                      >
+                  <InlineStack gap="200" blockAlign="start" wrap={false}>
+                    <div
+                      style={{
+                        width: "28px",
+                        height: "28px",
+                        minWidth: "28px",
+                        borderRadius: "50%",
+                        background: "#e3e3e3",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "12px",
+                        fontWeight: "600",
+                      }}
+                    >
                         1
-                      </div>
-                    </Box>
+                    </div>
                     <BlockStack gap="100">
                       <Text as="span" fontWeight="semibold">
                         Share the link
@@ -316,24 +315,23 @@ export default function CampaignLive() {
                       </Text>
                     </BlockStack>
                   </InlineStack>
-                  <InlineStack gap="200" blockAlign="start">
-                    <Box>
-                      <div
-                        style={{
-                          width: "24px",
-                          height: "24px",
-                          borderRadius: "50%",
-                          background: "#e3e3e3",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                        }}
-                      >
+                  <InlineStack gap="200" blockAlign="start" wrap={false}>
+                    <div
+                      style={{
+                        width: "28px",
+                        height: "28px",
+                        minWidth: "28px",
+                        borderRadius: "50%",
+                        background: "#e3e3e3",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "12px",
+                        fontWeight: "600",
+                      }}
+                    >
                         2
-                      </div>
-                    </Box>
+                    </div>
                     <BlockStack gap="100">
                       <Text as="span" fontWeight="semibold">
                         Review submissions
@@ -343,24 +341,23 @@ export default function CampaignLive() {
                       </Text>
                     </BlockStack>
                   </InlineStack>
-                  <InlineStack gap="200" blockAlign="start">
-                    <Box>
-                      <div
-                        style={{
-                          width: "24px",
-                          height: "24px",
-                          borderRadius: "50%",
-                          background: "#e3e3e3",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                        }}
-                      >
+                  <InlineStack gap="200" blockAlign="start" wrap={false}>
+                    <div
+                      style={{
+                        width: "28px",
+                        height: "28px",
+                        minWidth: "28px",
+                        borderRadius: "50%",
+                        background: "#e3e3e3",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "12px",
+                        fontWeight: "600",
+                      }}
+                    >
                         3
-                      </div>
-                    </Box>
+                    </div>
                     <BlockStack gap="100">
                       <Text as="span" fontWeight="semibold">
                         Download & use

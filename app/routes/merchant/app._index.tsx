@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, Link } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -9,6 +9,7 @@ import {
   BlockStack,
   InlineStack,
   Badge,
+  Button,
   ResourceList,
   ResourceItem,
   Thumbnail,
@@ -78,7 +79,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const campaigns = await prisma.campaign.findMany({
     where: { shopId: shop.id, status: "ACTIVE" },
-    include: { _count: { select: { submissions: true } } },
+    select: {
+      id: true,
+      title: true,
+      rewardMonths: true,
+      productTitle: true,
+      productImageUrl: true,
+      contentType: true,
+      _count: { select: { submissions: true } },
+    },
     orderBy: { createdAt: "desc" },
     take: 3,
   });
@@ -119,9 +128,7 @@ function StorageCard({ usedBytes, tier }: { usedBytes: number; tier: string }) {
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
           <Text as="h2" variant="headingMd">Storage</Text>
-          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>
-            {tierInfo.label} plan
-          </Badge>
+          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${tierInfo.label} plan`}</Badge>
         </InlineStack>
 
         <ProgressBar
@@ -199,7 +206,7 @@ export default function Dashboard() {
               <BlockStack gap="400">
                 <InlineStack align="space-between">
                   <Text as="h2" variant="headingMd">Recent Submissions</Text>
-                  <Link to="/app/submissions">View all</Link>
+                  <Button size="slim" url="/app/library">View all</Button>
                 </InlineStack>
                 {recentSubmissions.length === 0 ? (
                   <Text as="p" tone="subdued">
@@ -211,7 +218,7 @@ export default function Dashboard() {
                     renderItem={(submission: any) => (
                       <ResourceItem
                         id={submission.id}
-                        url={`/app/submissions/${submission.id}`}
+                        url={`/app/library/${submission.id}`}
                         media={
                           <Thumbnail
                             source={submission.thumbnailUrl || ""}
@@ -246,38 +253,73 @@ export default function Dashboard() {
           <Layout.Section variant="oneThird">
             <Card>
               <BlockStack gap="400">
-                <InlineStack align="space-between">
+                <InlineStack align="space-between" blockAlign="center">
                   <Text as="h2" variant="headingMd">Active Campaigns</Text>
-                  <Link to="/app/campaigns">View all</Link>
+                  <Button size="slim" url="/app/campaigns">View all</Button>
                 </InlineStack>
                 {activeCampaigns.length === 0 ? (
                   <Text as="p" tone="subdued">No active campaigns.</Text>
                 ) : (
-                  <BlockStack gap="300">
+                  <BlockStack gap="200">
                     {activeCampaigns.map((campaign: any) => (
-                      <Box key={campaign.id}>
-                        <Link to={`/app/campaigns/${campaign.id}`}>
-                          <BlockStack gap="100">
-                            <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {campaign.title}
+                      <a
+                        key={campaign.id}
+                        href={`/app/campaigns/${campaign.id}`}
+                        className="campaign-sidebar-card"
+                        style={{
+                          textDecoration: "none",
+                          color: "inherit",
+                          display: "flex",
+                          gap: "12px",
+                          alignItems: "center",
+                          padding: "8px",
+                          borderRadius: "10px",
+                          transition: "background 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "var(--p-color-bg-surface-hover)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                      >
+                        <div style={{
+                          width: "56px",
+                          height: "56px",
+                          minWidth: "56px",
+                          borderRadius: "10px",
+                          overflow: "hidden",
+                          background: "#f3f3f3",
+                          position: "relative",
+                        }}>
+                          {campaign.productImageUrl ? (
+                            <img
+                              src={campaign.productImageUrl}
+                              alt={campaign.productTitle || campaign.title}
+                              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                            />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #f0f0f0, #e0e0e0)", fontSize: "11px", color: "#999" }}>
+                              No img
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>{campaign.title}</Text>
+                          </div>
+                          {campaign.productTitle && (
+                            <Text as="p" variant="bodySm" tone="subdued" truncate>{campaign.productTitle}</Text>
+                          )}
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
+                            <Badge>{campaign.contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {`${campaign._count.submissions} sub${campaign._count.submissions !== 1 ? "s" : ""} · ${campaign.rewardMonths}mo`}
                             </Text>
-                            <InlineStack gap="200">
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {campaign._count.submissions} submissions
-                              </Text>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                · {campaign.rewardMonths}mo reward
-                              </Text>
-                            </InlineStack>
-                          </BlockStack>
-                        </Link>
-                        <Box paddingBlockStart="300"><Divider /></Box>
-                      </Box>
+                          </div>
+                        </div>
+                      </a>
                     ))}
                   </BlockStack>
                 )}
                 <Box paddingBlockStart="200">
-                  <Link to="/app/campaigns/new">Create campaign</Link>
+                  <Button variant="primary" url="/app/campaigns/new">Create campaign</Button>
                 </Box>
               </BlockStack>
             </Card>
@@ -290,7 +332,7 @@ export default function Dashboard() {
                     <Text as="p" variant="bodyMd">
                       Configure your subscription provider and brand settings to start collecting content.
                     </Text>
-                    <Link to="/app/settings">Go to Settings</Link>
+                    <Button variant="primary" url="/app/settings">Go to Settings</Button>
                   </BlockStack>
                 </Card>
               </Box>

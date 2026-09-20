@@ -23,6 +23,7 @@ import {
   Icon,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 
@@ -87,6 +88,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     data: {
       shopId: shop.id,
       title: title.trim(),
+      productId: (formData.get("productId") as string) || null,
+      productTitle: (formData.get("productTitle") as string) || null,
+      productImageUrl: (formData.get("productImageUrl") as string) || null,
       moment: moment.trim(),
       contentType: contentType as any,
       discountType: discountType as any,
@@ -197,6 +201,31 @@ export default function NewCampaignWizard() {
   // Rights
   const [rightsAcknowledged, setRightsAcknowledged] = useState(false);
 
+  // Product
+  const [productId, setProductId] = useState("");
+  const [productTitle, setProductTitle] = useState("");
+  const [productImageUrl, setProductImageUrl] = useState("");
+  const shopify = useAppBridge();
+
+  const handleProductSelect = useCallback(async () => {
+    try {
+      const selected = await shopify.resourcePicker({
+          type: "product",
+          multiple: false,
+          selectionIds: productId ? [{ id: productId }] : [],
+          filter: { variants: false },
+        });
+      if (selected && selected.length > 0) {
+        const product = selected[0];
+        setProductId(product.id);
+        setProductTitle(product.title);
+        setProductImageUrl(product.images?.[0]?.originalSrc || "");
+      }
+    } catch (e) {
+      // User cancelled picker
+    }
+  }, [shopify]);
+
   // Helpers
   const addRequirement = useCallback(() => {
     if (newRequirement.trim()) {
@@ -224,7 +253,7 @@ export default function NewCampaignWizard() {
 
   const canAdvance = useCallback(() => {
     switch (step) {
-      case 0: return title.trim().length > 0 && moment.trim().length > 0;
+      case 0: return title.trim().length > 0 && moment.trim().length > 0 && productId.length > 0;
       case 1: {
         if (discountType === "FREE") return rewardMonths >= 1;
         if (discountType === "FIXED_AMOUNT") return rewardMonths >= 1 && parseFloat(discountValue) > 0;
@@ -267,6 +296,9 @@ export default function NewCampaignWizard() {
       ];
       const formData = new FormData();
       formData.set("title", title);
+      if (productId) formData.set("productId", productId);
+      if (productTitle) formData.set("productTitle", productTitle);
+      if (productImageUrl) formData.set("productImageUrl", productImageUrl);
       formData.set("moment", moment);
       formData.set("contentType", contentType);
       formData.set("discountType", discountType);
@@ -289,6 +321,37 @@ export default function NewCampaignWizard() {
     <Layout>
       <Layout.Section>
         <BlockStack gap="400">
+          {/* Product selection */}
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h3" variant="headingMd">Product</Text>
+              <Text as="p" tone="subdued">
+                Select the product this campaign is for. Customers will submit content featuring this product.
+              </Text>
+              {productTitle ? (
+                <InlineStack gap="400" blockAlign="center">
+                  {productImageUrl ? (
+                    <div style={{ width: 64, height: 64, borderRadius: 8, overflow: "hidden", background: "#f3f3f3", flexShrink: 0 }}>
+                      <img src={productImageUrl} alt={productTitle} style={{ width: 64, height: 64, objectFit: "cover", display: "block" }} />
+                    </div>
+                  ) : (
+                    <div style={{ width: 64, height: 64, borderRadius: 8, background: "#f3f3f3", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <Text as="span" tone="subdued">No img</Text>
+                    </div>
+                  )}
+                  <Box width="100%">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">{productTitle}</Text>
+                      <Button variant="plain" onClick={handleProductSelect} size="slim">Change product</Button>
+                    </BlockStack>
+                  </Box>
+                </InlineStack>
+              ) : (
+                <Button onClick={handleProductSelect}>Select product</Button>
+              )}
+            </BlockStack>
+          </Card>
+
           {/* Core info */}
           <Card>
             <BlockStack gap="400">
@@ -351,7 +414,7 @@ export default function NewCampaignWizard() {
                     onChange={setNewRequirement}
                     placeholder="e.g. Product label must be visible"
                     autoComplete="off"
-                    onKeyPress={(e: React.KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); addRequirement(); } }}
+                    onKeyDown={(e: React.KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); addRequirement(); } }}
                   />
                 </Box>
                 <Button onClick={addRequirement} disabled={!newRequirement.trim()} size="slim">
@@ -446,7 +509,7 @@ export default function NewCampaignWizard() {
               </Text>
               {referencePreview ? (
                 <BlockStack gap="300">
-                  <Box borderRadius="200" overflow="hidden">
+                  <Box borderRadius="200" >
                     <img
                       src={referencePreview}
                       alt="Reference scene"
@@ -481,10 +544,18 @@ export default function NewCampaignWizard() {
           <BlockStack gap="300">
             <Text as="h3" variant="headingMd">Preview</Text>
             <Divider />
+            {productImageUrl && (
+              <Box borderRadius="200" >
+                <img src={productImageUrl} alt={productTitle} style={{ width: "100%", maxHeight: 140, objectFit: "contain", display: "block", borderRadius: 8, background: "#f9fafb" }} />
+              </Box>
+            )}
             <InlineStack gap="200" blockAlign="center">
               <Text as="p" variant="headingSm">{title || "Campaign title"}</Text>
               <Badge>{contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
             </InlineStack>
+            {productTitle && (
+              <Text as="p" variant="bodySm" tone="subdued">Product: {productTitle}</Text>
+            )}
             <Text as="p" tone={moment ? undefined : "subdued"}>
               {moment || "Your creative moment..."}
             </Text>
@@ -771,10 +842,18 @@ export default function NewCampaignWizard() {
             {/* Campaign summary */}
             <Card>
               <BlockStack gap="300">
+                {productImageUrl && (
+                  <Box borderRadius="200" >
+                    <img src={productImageUrl} alt={productTitle} style={{ width: "100%", maxHeight: 180, objectFit: "contain", display: "block", borderRadius: 8, background: "#f9fafb" }} />
+                  </Box>
+                )}
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="h3" variant="headingMd">{title}</Text>
                   <Badge>{contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
                 </InlineStack>
+                {productTitle && (
+                  <Text as="p" variant="bodySm" tone="subdued">Product: {productTitle}</Text>
+                )}
                 <Text as="p">{moment}</Text>
 
                 {requirements.length > 0 && (
@@ -808,7 +887,7 @@ export default function NewCampaignWizard() {
               <Card>
                 <BlockStack gap="200">
                   <Text as="h3" variant="headingMd">Reference scene</Text>
-                  <Box borderRadius="200" overflow="hidden">
+                  <Box borderRadius="200" >
                     <img
                       src={referencePreview}
                       alt="Reference"
@@ -867,6 +946,9 @@ export default function NewCampaignWizard() {
               <Divider />
               <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                 <BlockStack gap="300">
+                  {productImageUrl && (
+                    <img src={productImageUrl} alt={productTitle} style={{ width: "100%", maxHeight: 120, objectFit: "contain", display: "block", borderRadius: 8, background: "#fff" }} />
+                  )}
                   <Text as="p" variant="headingSm">{title}</Text>
                   <Text as="p">{moment}</Text>
                   <Divider />

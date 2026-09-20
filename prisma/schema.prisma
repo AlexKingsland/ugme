@@ -111,6 +111,9 @@ model Campaign {
   title            String
   status           CampaignStatus @default(DRAFT)
   moment           String         // The creative/contextual ask
+  productId        String?        // Shopify product GID
+  productTitle     String?        // Product name for display
+  productImageUrl  String?        // Product image URL for hero display
   contentType      ContentType      @default(VIDEO)
   captureSpecs     String         @default("[]") // JSON array of spec objects
   rewardMonths     Int            @default(1)

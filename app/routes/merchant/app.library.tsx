@@ -62,22 +62,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const campaignFilter = url.searchParams.get("campaign") || "all";
   const mediaFilter = url.searchParams.get("media") || "all";
   const sort = url.searchParams.get("sort") || "oldest";
+  const productFilter = url.searchParams.get("product") || "all";
 
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) {
     return json({
-      items: [], campaigns: [], counts: { pending: 0, approved: 0 },
+      items: [], campaigns: [], products: [], counts: { pending: 0, approved: 0 },
       storage: { usedBytes: 0, tier: "TIER_10GB" },
-      tab, campaignFilter, mediaFilter, sort,
+      tab, campaignFilter, mediaFilter, sort, productFilter,
     });
   }
 
   // Campaigns for filter dropdown
   const campaigns = await prisma.campaign.findMany({
     where: { shopId: shop.id },
-    select: { id: true, title: true },
+    select: { id: true, title: true, productTitle: true, productId: true },
     orderBy: { createdAt: "desc" },
   });
+
+  // Build unique product list from campaigns
+  const productMap = new Map<string, string>();
+  campaigns.forEach((c) => {
+    if (c.productId && c.productTitle) {
+      productMap.set(c.productId, c.productTitle);
+    }
+  });
+  const products = Array.from(productMap.entries()).map(([id, title]) => ({ id, title }));
 
   // Build where clause — never show rejected
   const where: any = {
@@ -86,6 +96,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
   if (campaignFilter !== "all") {
     where.campaignId = campaignFilter;
+  }
+  if (productFilter !== "all") {
+    // Find all campaign IDs for this product
+    const productCampaignIds = campaigns
+      .filter((c) => c.productId === productFilter)
+      .map((c) => c.id);
+    if (productCampaignIds.length > 0) {
+      where.campaignId = where.campaignId
+        ? where.campaignId
+        : { in: productCampaignIds };
+    } else {
+      where.campaignId = "nonexistent"; // no results
+    }
   }
   if (mediaFilter !== "all") {
     where.contentType = mediaFilter;
@@ -139,6 +162,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     })),
     campaigns: campaigns.map((c) => ({ id: c.id, title: c.title })),
     counts,
+    products,
     storage: {
       usedBytes: storageAgg._sum.fileBytes || 0,
       tier: shop.storageTier,
@@ -147,6 +171,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     campaignFilter,
     mediaFilter,
     sort,
+    productFilter,
   });
 };
 
@@ -223,7 +248,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Library() {
-  const { items, campaigns, counts, storage, tab, campaignFilter, mediaFilter, sort } = useLoaderData<typeof loader>();
+  const { items, campaigns, counts, storage, tab, campaignFilter, mediaFilter, sort, products, productFilter } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isActing = navigation.state === "submitting";
@@ -231,6 +256,7 @@ export default function Library() {
   const [currentTab, setCurrentTab] = useState(tab);
   const [currentCampaign, setCurrentCampaign] = useState(campaignFilter);
   const [currentMedia, setCurrentMedia] = useState(mediaFilter);
+  const [currentProduct, setCurrentProduct] = useState(productFilter);
   const [currentSort, setCurrentSort] = useState(sort);
   const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
 
@@ -243,8 +269,9 @@ export default function Library() {
     params.set("campaign", overrides.campaign ?? currentCampaign);
     params.set("media", overrides.media ?? currentMedia);
     params.set("sort", overrides.sort ?? currentSort);
+    params.set("product", overrides.product ?? currentProduct);
     submit(params, { method: "get" });
-  }, [currentTab, currentCampaign, currentMedia, currentSort, submit]);
+  }, [currentTab, currentCampaign, currentMedia, currentSort, currentProduct, submit]);
 
   const handleTabChange = useCallback((t: string) => {
     setCurrentTab(t);
@@ -311,19 +338,22 @@ export default function Library() {
                   onClick={() => handleTabChange("pending")}
                   size="slim"
                 >
-                  Pending ({counts.pending})
+                  {`Pending (${counts.pending})`}
                 </Button>
                 <Button
                   pressed={!isPending}
                   onClick={() => handleTabChange("approved")}
                   size="slim"
                 >
-                  Approved ({counts.approved})
+                  {`Approved (${counts.approved})`}
                 </Button>
               </InlineStack>
               <InlineStack gap="300" blockAlign="center">
+                <Badge tone={storagePct >= 90 ? "critical" : storagePct >= 70 ? "attention" : "info"}>
+                  {`${tierInfo.label} plan`}
+                </Badge>
                 <Text as="span" variant="bodySm" tone="subdued">
-                  {formatBytes(storage.usedBytes)} / {tierInfo.label}
+                  {formatBytes(storage.usedBytes)} used
                 </Text>
                 <Box width="120px">
                   <ProgressBar
@@ -354,6 +384,22 @@ export default function Library() {
                 }}
               />
             </Box>
+            {products.length > 0 && (
+              <Box width="200px">
+                <Select
+                  label="Product"
+                  options={[
+                    { label: "All products", value: "all" },
+                    ...products.map((p: any) => ({ label: p.title, value: p.id })),
+                  ]}
+                  value={currentProduct}
+                  onChange={(v) => {
+                    setCurrentProduct(v);
+                    navigate({ product: v });
+                  }}
+                />
+              </Box>
+            )}
             <Box width="160px">
               <Select
                 label="Media"
