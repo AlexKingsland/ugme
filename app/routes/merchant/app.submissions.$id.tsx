@@ -1,4 +1,4 @@
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate, useSubmit } from "@remix-run/react";
 import {
@@ -14,15 +14,19 @@ import {
   Button,
   Banner,
   TextField,
-  MediaCard,
-  VideoThumbnail,
 } from "@shopify/polaris";
-import { useState } from "react";
+import {
+  CheckCircleIcon,
+  XCircleIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+} from "@shopify/polaris-icons";
+import { useState, useCallback } from "react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const { id } = params;
 
   const submission = await prisma.submission.findUnique({
@@ -31,12 +35,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       customer: {
         select: {
           email: true,
-          subscriptionStatus: true,
+                    subscriptionStatus: true,
           shopifyCustomerId: true,
         },
       },
       campaign: {
-        select: { title: true, rewardMonths: true, moment: true },
+        select: { id: true, title: true, rewardMonths: true, moment: true, captureSpecs: true },
       },
       reward: true,
     },
@@ -44,6 +48,33 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (!submission) {
     throw new Response("Submission not found", { status: 404 });
+  }
+
+  // Find adjacent submissions for prev/next navigation
+  const shop = await prisma.shop.findUnique({
+    where: { shopDomain: session.shop },
+  });
+
+  let prevId: string | null = null;
+  let nextId: string | null = null;
+
+  if (shop) {
+    const allSubmissions = await prisma.submission.findMany({
+      where: { campaign: { shopId: shop.id } },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const currentIndex = allSubmissions.findIndex((s) => s.id === id);
+    if (currentIndex > 0) prevId = allSubmissions[currentIndex - 1].id;
+    if (currentIndex < allSubmissions.length - 1)
+      nextId = allSubmissions[currentIndex + 1].id;
+  }
+
+  let captureSpecs: Array<{ label: string; description: string }> = [];
+  try {
+    captureSpecs = JSON.parse(submission.campaign.captureSpecs);
+  } catch {
+    captureSpecs = [];
   }
 
   return json({
@@ -60,13 +91,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       createdAt: new Date(submission.createdAt).toLocaleDateString(),
       customer: {
         email: submission.customer.email,
+        name:
+          submission.customer.email,
         subscriptionStatus: submission.customer.subscriptionStatus,
         shopifyCustomerId: submission.customer.shopifyCustomerId,
       },
       campaign: {
+        id: submission.campaign.id,
         title: submission.campaign.title,
         rewardMonths: submission.campaign.rewardMonths,
         moment: submission.campaign.moment,
+        captureSpecs,
       },
       reward: submission.reward
         ? {
@@ -78,6 +113,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           }
         : null,
     },
+    prevId,
+    nextId,
   });
 };
 
@@ -98,7 +135,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       },
     });
 
-    // In real app: trigger reward creation here
     const submission = await prisma.submission.findUnique({
       where: { id },
       include: { campaign: true },
@@ -145,19 +181,22 @@ function submissionStatusBadge(status: string) {
 }
 
 export default function SubmissionDetailPage() {
-  const { submission } = useLoaderData<typeof loader>();
+  const { submission, prevId, nextId } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const submit = useSubmit();
   const [reviewNote, setReviewNote] = useState(submission.reviewNote || "");
 
   const isPending = submission.status === "PENDING";
 
-  const handleAction = (action: string) => {
-    const formData = new FormData();
-    formData.set("action", action);
-    formData.set("reviewNote", reviewNote);
-    submit(formData, { method: "post" });
-  };
+  const handleAction = useCallback(
+    (action: string) => {
+      const formData = new FormData();
+      formData.set("action", action);
+      formData.set("reviewNote", reviewNote);
+      submit(formData, { method: "post" });
+    },
+    [reviewNote, submit]
+  );
 
   return (
     <Page
@@ -165,59 +204,143 @@ export default function SubmissionDetailPage() {
         content: "Submissions",
         onAction: () => navigate("/app/submissions"),
       }}
-      title={`Submission from ${submission.customer.email}`}
+      title={`Submission from ${submission.customer.name}`}
       titleMetadata={submissionStatusBadge(submission.status)}
+      secondaryActions={[
+        ...(prevId
+          ? [
+              {
+                content: "Previous",
+                icon: ArrowLeftIcon,
+                onAction: () => navigate(`/app/submissions/${prevId}`),
+              },
+            ]
+          : []),
+        ...(nextId
+          ? [
+              {
+                content: "Next",
+                icon: ArrowRightIcon,
+                onAction: () => navigate(`/app/submissions/${nextId}`),
+              },
+            ]
+          : []),
+      ]}
     >
       <Layout>
-        {/* Content preview */}
+        {/* ── Content preview (main area) ── */}
         <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                {submission.contentType === "VIDEO" ? "Video" : "Photo"} submission
-              </Text>
-              <Box
-                background="bg-surface-secondary"
-                padding="800"
-                borderRadius="200"
-              >
-                {submission.contentType === "VIDEO" ? (
-                  <BlockStack gap="200" inlineAlign="center">
-                    {submission.thumbnailUrl ? (
+          <BlockStack gap="400">
+            {/* Large content preview */}
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    {submission.contentType === "VIDEO"
+                      ? "Video"
+                      : "Photo"}{" "}
+                    submission
+                  </Text>
+                  <Badge>
+                    {submission.contentType === "VIDEO" ? "Video" : "Photo"}
+                  </Badge>
+                </InlineStack>
+
+                {/* Content viewer */}
+                <Box borderRadius="300" overflow="hidden">
+                  <div
+                    style={{
+                      background: "#1a1a1a",
+                      borderRadius: "12px",
+                      overflow: "hidden",
+                      position: "relative",
+                    }}
+                  >
+                    {submission.contentType === "VIDEO" ? (
+                      submission.contentUrl ? (
+                        <video
+                          src={submission.contentUrl}
+                          controls
+                          poster={submission.thumbnailUrl || undefined}
+                          style={{
+                            width: "100%",
+                            maxHeight: "500px",
+                            display: "block",
+                          }}
+                        />
+                      ) : submission.thumbnailUrl ? (
+                        <img
+                          src={submission.thumbnailUrl}
+                          alt="Video thumbnail"
+                          style={{
+                            width: "100%",
+                            maxHeight: "500px",
+                            objectFit: "contain",
+                            display: "block",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            height: "400px",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Text as="p" tone="subdued">
+                            Video preview not available
+                          </Text>
+                        </div>
+                      )
+                    ) : submission.contentUrl ? (
                       <img
-                        src={submission.thumbnailUrl}
-                        alt="Video thumbnail"
-                        style={{ maxWidth: "100%", borderRadius: "8px" }}
+                        src={submission.contentUrl}
+                        alt="Submission photo"
+                        style={{
+                          width: "100%",
+                          maxHeight: "500px",
+                          objectFit: "contain",
+                          display: "block",
+                        }}
                       />
                     ) : (
-                      <Text as="p" alignment="center" tone="subdued">
-                        Video preview not available
-                      </Text>
+                      <div
+                        style={{
+                          height: "400px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Text as="p" tone="subdued">
+                          Photo not available
+                        </Text>
+                      </div>
                     )}
-                    <Text as="p" alignment="center" tone="subdued">
-                      {submission.contentUrl}
-                    </Text>
-                  </BlockStack>
-                ) : (
-                  <BlockStack inlineAlign="center">
-                    <img
-                      src={submission.contentUrl}
-                      alt="Submission photo"
-                      style={{ maxWidth: "100%", maxHeight: "400px", borderRadius: "8px" }}
-                    />
-                  </BlockStack>
-                )}
-              </Box>
-            </BlockStack>
-          </Card>
+                  </div>
+                </Box>
 
-          {/* Review actions */}
-          {isPending && (
-            <Box paddingBlockStart="400">
+                {submission.contentUrl && (
+                  <Text as="p" variant="bodySm" tone="subdued" breakWord>
+                    {submission.contentUrl}
+                  </Text>
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Review actions (pending only) */}
+            {isPending && (
               <Card>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">
                     Review this submission
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Approving will grant the customer{" "}
+                    {submission.campaign.rewardMonths} free month
+                    {submission.campaign.rewardMonths !== 1 ? "s" : ""} on their
+                    subscription.
                   </Text>
                   <TextField
                     label="Review note (optional)"
@@ -231,53 +354,80 @@ export default function SubmissionDetailPage() {
                     <Button
                       variant="primary"
                       tone="success"
+                      icon={CheckCircleIcon}
                       onClick={() => handleAction("approve")}
+                      size="large"
                     >
-                      Approve & reward
+                      Approve &amp; reward
                     </Button>
                     <Button
-                      variant="primary"
                       tone="critical"
+                      icon={XCircleIcon}
                       onClick={() => handleAction("reject")}
+                      size="large"
                     >
                       Reject
                     </Button>
                   </InlineStack>
                 </BlockStack>
               </Card>
-            </Box>
-          )}
+            )}
 
-          {!isPending && submission.reviewNote && (
-            <Box paddingBlockStart="400">
+            {/* Review outcome (already reviewed) */}
+            {!isPending && (
               <Card>
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">Review note</Text>
-                  <Text as="p">{submission.reviewNote}</Text>
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      Review decision
+                    </Text>
+                    {submissionStatusBadge(submission.status)}
+                  </InlineStack>
+                  {submission.reviewNote && (
+                    <>
+                      <Divider />
+                      <Text as="p">{submission.reviewNote}</Text>
+                    </>
+                  )}
                   {submission.reviewedAt && (
-                    <Text as="p" tone="subdued">
+                    <Text as="p" variant="bodySm" tone="subdued">
                       Reviewed on {submission.reviewedAt}
                     </Text>
                   )}
                 </BlockStack>
               </Card>
-            </Box>
-          )}
+            )}
+          </BlockStack>
         </Layout.Section>
 
-        {/* Sidebar */}
+        {/* ── Sidebar ── */}
         <Layout.Section variant="oneThird">
           <BlockStack gap="400">
+            {/* Customer info */}
             <Card>
               <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">Customer</Text>
+                <Text as="h2" variant="headingMd">
+                  Customer
+                </Text>
                 <Divider />
                 <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Email</Text>
+                  <Text as="span" tone="subdued">
+                    Name
+                  </Text>
+                  <Text as="span" fontWeight="semibold">
+                    {submission.customer.name}
+                  </Text>
+                </InlineStack>
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">
+                    Email
+                  </Text>
                   <Text as="span">{submission.customer.email}</Text>
                 </InlineStack>
                 <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Subscription</Text>
+                  <Text as="span" tone="subdued">
+                    Subscription
+                  </Text>
                   <Badge
                     tone={
                       submission.customer.subscriptionStatus === "ACTIVE"
@@ -291,28 +441,93 @@ export default function SubmissionDetailPage() {
               </BlockStack>
             </Card>
 
+            {/* Campaign info */}
             <Card>
               <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">Campaign</Text>
+                <Text as="h2" variant="headingMd">
+                  Campaign
+                </Text>
                 <Divider />
-                <Text as="p" fontWeight="semibold">{submission.campaign.title}</Text>
-                <Text as="p" tone="subdued">{submission.campaign.moment}</Text>
+                <Button
+                  variant="plain"
+                  onClick={() =>
+                    navigate(`/app/campaigns/${submission.campaign.id}`)
+                  }
+                >
+                  {submission.campaign.title} →
+                </Button>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {submission.campaign.moment}
+                </Text>
                 <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Reward</Text>
-                  <Text as="span">
-                    {submission.campaign.rewardMonths} month{submission.campaign.rewardMonths !== 1 ? "s" : ""} free
+                  <Text as="span" tone="subdued">
+                    Reward
+                  </Text>
+                  <Text as="span" fontWeight="semibold">
+                    {submission.campaign.rewardMonths} month
+                    {submission.campaign.rewardMonths !== 1 ? "s" : ""} free
                   </Text>
                 </InlineStack>
               </BlockStack>
             </Card>
 
+            {/* Capture specs checklist */}
+            {submission.campaign.captureSpecs.length > 0 && (
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h2" variant="headingMd">
+                    Capture specs
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Check the submission against these guidelines:
+                  </Text>
+                  <Divider />
+                  {submission.campaign.captureSpecs.map(
+                    (
+                      spec: { label: string; description: string },
+                      i: number
+                    ) => (
+                      <InlineStack key={i} gap="200" blockAlign="start">
+                        <Box>
+                          <div
+                            style={{
+                              width: "18px",
+                              height: "18px",
+                              borderRadius: "3px",
+                              border: "2px solid #ccc",
+                              marginTop: "2px",
+                            }}
+                          />
+                        </Box>
+                        <BlockStack gap="050">
+                          <Text as="span" fontWeight="semibold">
+                            {spec.label}
+                          </Text>
+                          {spec.description && (
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {spec.description}
+                            </Text>
+                          )}
+                        </BlockStack>
+                      </InlineStack>
+                    )
+                  )}
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Reward status */}
             {submission.reward && (
               <Card>
                 <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">Reward</Text>
+                  <Text as="h2" variant="headingMd">
+                    Reward
+                  </Text>
                   <Divider />
                   <InlineStack align="space-between">
-                    <Text as="span" tone="subdued">Status</Text>
+                    <Text as="span" tone="subdued">
+                      Status
+                    </Text>
                     <Badge
                       tone={
                         submission.reward.status === "APPLIED"
@@ -326,12 +541,16 @@ export default function SubmissionDetailPage() {
                     </Badge>
                   </InlineStack>
                   <InlineStack align="space-between">
-                    <Text as="span" tone="subdued">Months</Text>
+                    <Text as="span" tone="subdued">
+                      Months
+                    </Text>
                     <Text as="span">{submission.reward.months}</Text>
                   </InlineStack>
                   {submission.reward.appliedAt && (
                     <InlineStack align="space-between">
-                      <Text as="span" tone="subdued">Applied</Text>
+                      <Text as="span" tone="subdued">
+                        Applied
+                      </Text>
                       <Text as="span">{submission.reward.appliedAt}</Text>
                     </InlineStack>
                   )}
@@ -339,16 +558,25 @@ export default function SubmissionDetailPage() {
               </Card>
             )}
 
+            {/* Submission metadata */}
             <Card>
               <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">Details</Text>
+                <Text as="h2" variant="headingMd">
+                  Details
+                </Text>
                 <Divider />
                 <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Type</Text>
-                  <Text as="span">{submission.contentType}</Text>
+                  <Text as="span" tone="subdued">
+                    Content type
+                  </Text>
+                  <Badge>
+                    {submission.contentType === "VIDEO" ? "Video" : "Photo"}
+                  </Badge>
                 </InlineStack>
                 <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Submitted</Text>
+                  <Text as="span" tone="subdued">
+                    Submitted
+                  </Text>
                   <Text as="span">{submission.createdAt}</Text>
                 </InlineStack>
               </BlockStack>

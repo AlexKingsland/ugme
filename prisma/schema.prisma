@@ -60,6 +60,12 @@ enum ContentType {
   VIDEO
 }
 
+enum DiscountType {
+  FREE
+  FIXED_AMOUNT
+  PERCENTAGE
+}
+
 enum RewardStatus {
   CREATED
   APPLIED
@@ -98,8 +104,11 @@ model Campaign {
   title            String
   status           CampaignStatus @default(DRAFT)
   moment           String         // The creative/contextual ask
+  contentType      ContentType      @default(VIDEO)
   captureSpecs     String         @default("[]") // JSON array of spec objects
   rewardMonths     Int            @default(1)
+  discountType     DiscountType   @default(FREE)
+  discountValue    Float          @default(0)
   startDate        DateTime?
   endDate          DateTime?
   maxSubmissions   Int?

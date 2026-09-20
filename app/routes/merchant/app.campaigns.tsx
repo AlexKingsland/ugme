@@ -93,6 +93,7 @@ export default function CampaignsPage() {
             <Card>
               <EmptyState
                 heading="Create your first campaign"
+                action={{ content: "Create campaign", url: "/app/campaigns/new" }}
                 image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
               >
                 <p>

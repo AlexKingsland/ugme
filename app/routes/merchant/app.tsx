@@ -6,11 +6,22 @@ import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../../shopify.server";
+import prisma from "../../db.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+
+  // Auto-provision Shop record on first visit
+  await prisma.shop.upsert({
+    where: { shopDomain: session.shop },
+    update: { accessToken: session.accessToken ?? "" },
+    create: {
+      shopDomain: session.shop,
+      accessToken: session.accessToken ?? "",
+    },
+  });
 
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };

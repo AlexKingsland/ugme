@@ -1,20 +1,26 @@
 import { json } from "@remix-run/node";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useNavigate, useSearchParams, useSubmit } from "@remix-run/react";
 import {
   Page,
   Layout,
   Card,
-  IndexTable,
   Text,
   Badge,
-  Filters,
-  ChoiceList,
   Tabs,
   EmptyState,
-  Thumbnail,
   InlineStack,
+  BlockStack,
+  Box,
+  Button,
+  Divider,
+  Banner,
 } from "@shopify/polaris";
+import {
+  CheckCircleIcon,
+  XCircleIcon,
+  ViewIcon,
+} from "@shopify/polaris-icons";
 import { useState, useCallback } from "react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
@@ -29,7 +35,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   if (!shop) {
-    return json({ submissions: [], counts: { all: 0, pending: 0, approved: 0, rejected: 0 } });
+    return json({
+      submissions: [],
+      counts: { all: 0, pending: 0, approved: 0, rejected: 0 },
+    });
   }
 
   const where: any = {
@@ -42,14 +51,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const submissions = await prisma.submission.findMany({
     where,
     include: {
-      customer: { select: { email: true } },
-      campaign: { select: { title: true } },
+      customer: {
+        select: { email: true },
+      },
+      campaign: { select: { title: true, rewardMonths: true } },
       reward: { select: { status: true, months: true } },
     },
     orderBy: { createdAt: "desc" },
   });
 
-  // Get counts for each status
+  // Get counts
   const allSubmissions = await prisma.submission.findMany({
     where: { campaign: { shopId: shop.id } },
     select: { status: true },
@@ -65,20 +76,58 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const formatted = submissions.map((s) => ({
     id: s.id,
     customerEmail: s.customer.email,
+    customerName: s.customer.email,
     campaignTitle: s.campaign.title,
+    rewardMonths: s.campaign.rewardMonths,
     status: s.status,
     contentType: s.contentType,
     contentUrl: s.contentUrl,
     thumbnailUrl: s.thumbnailUrl,
     rewardStatus: s.reward?.status ?? null,
-    rewardMonths: s.reward?.months ?? null,
     createdAt: new Date(s.createdAt).toLocaleDateString(),
   }));
 
   return json({ submissions: formatted, counts });
 };
 
-function submissionStatusBadge(status: string) {
+// Quick approve/reject from the list
+export const action = async ({ request }: ActionFunctionArgs) => {
+  await authenticate.admin(request);
+  const formData = await request.formData();
+  const submissionId = formData.get("submissionId") as string;
+  const intent = formData.get("intent") as string;
+
+  if (intent === "approve") {
+    await prisma.submission.update({
+      where: { id: submissionId },
+      data: { status: "APPROVED", reviewedAt: new Date() },
+    });
+    const submission = await prisma.submission.findUnique({
+      where: { id: submissionId },
+      include: { campaign: true },
+    });
+    if (submission) {
+      await prisma.reward.create({
+        data: {
+          submissionId: submission.id,
+          customerId: submission.customerId,
+          months: submission.campaign.rewardMonths,
+          discountProvider: "SHOPIFY_NATIVE",
+          status: "CREATED",
+        },
+      });
+    }
+  } else if (intent === "reject") {
+    await prisma.submission.update({
+      where: { id: submissionId },
+      data: { status: "REJECTED", reviewedAt: new Date() },
+    });
+  }
+
+  return json({ ok: true });
+};
+
+function statusBadge(status: string) {
   switch (status) {
     case "APPROVED":
       return <Badge tone="success">Approved</Badge>;
@@ -93,9 +142,144 @@ function submissionStatusBadge(status: string) {
   }
 }
 
+// ── Submission card component ─────────────────────────────────
+function SubmissionCard({
+  submission,
+  onNavigate,
+  onQuickAction,
+}: {
+  submission: any;
+  onNavigate: (id: string) => void;
+  onQuickAction: (id: string, action: string) => void;
+}) {
+  const isPending = submission.status === "PENDING";
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="start">
+          <InlineStack gap="300" blockAlign="center">
+            {/* Thumbnail */}
+            <div
+              onClick={() => onNavigate(submission.id)}
+              style={{
+                width: "80px",
+                height: "80px",
+                borderRadius: "10px",
+                background: submission.thumbnailUrl
+                  ? `url(${submission.thumbnailUrl}) center/cover`
+                  : "#f0f0f0",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                fontSize: "24px",
+                color: "#999",
+                border: "1px solid #e5e5e5",
+                flexShrink: 0,
+              }}
+            >
+              {!submission.thumbnailUrl &&
+                (submission.contentType === "VIDEO" ? "▶" : "📷")}
+            </div>
+
+            <BlockStack gap="100">
+              <Text as="span" variant="bodyMd" fontWeight="semibold">
+                {submission.customerName}
+              </Text>
+              <Text as="span" variant="bodySm" tone="subdued">
+                {submission.campaignTitle}
+              </Text>
+              <InlineStack gap="200">
+                {statusBadge(submission.status)}
+                <Badge>
+                  {submission.contentType === "VIDEO" ? "Video" : "Photo"}
+                </Badge>
+              </InlineStack>
+            </BlockStack>
+          </InlineStack>
+
+          <BlockStack gap="100" align="end">
+            <Text as="span" variant="bodySm" tone="subdued">
+              {submission.createdAt}
+            </Text>
+            {submission.rewardStatus && (
+              <Badge
+                tone={
+                  submission.rewardStatus === "APPLIED" ? "success" : undefined
+                }
+              >
+                {submission.rewardStatus === "APPLIED"
+                  ? "Reward applied"
+                  : "Reward pending"}
+              </Badge>
+            )}
+          </BlockStack>
+        </InlineStack>
+
+        {/* Quick actions for pending */}
+        {isPending && (
+          <>
+            <Divider />
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="span" variant="bodySm" tone="subdued">
+                {submission.rewardMonths} month
+                {submission.rewardMonths !== 1 ? "s" : ""} free on approval
+              </Text>
+              <InlineStack gap="200">
+                <Button
+                  icon={CheckCircleIcon}
+                  tone="success"
+                  onClick={() => onQuickAction(submission.id, "approve")}
+                  size="slim"
+                >
+                  Approve
+                </Button>
+                <Button
+                  icon={XCircleIcon}
+                  tone="critical"
+                  onClick={() => onQuickAction(submission.id, "reject")}
+                  size="slim"
+                >
+                  Reject
+                </Button>
+                <Button
+                  icon={ViewIcon}
+                  variant="plain"
+                  onClick={() => onNavigate(submission.id)}
+                  size="slim"
+                >
+                  Review
+                </Button>
+              </InlineStack>
+            </InlineStack>
+          </>
+        )}
+
+        {!isPending && (
+          <>
+            <Divider />
+            <InlineStack align="end">
+              <Button
+                variant="plain"
+                onClick={() => onNavigate(submission.id)}
+                size="slim"
+              >
+                View details →
+              </Button>
+            </InlineStack>
+          </>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
+// ── Main component ──────────────────────────────────────────────
 export default function SubmissionsPage() {
   const { submissions, counts } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const submitForm = useSubmit();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const currentStatus = searchParams.get("status") || "ALL";
@@ -118,7 +302,17 @@ export default function SubmissionsPage() {
         setSearchParams({ status });
       }
     },
-    [setSearchParams],
+    [setSearchParams]
+  );
+
+  const handleQuickAction = useCallback(
+    (submissionId: string, intent: string) => {
+      const formData = new FormData();
+      formData.set("submissionId", submissionId);
+      formData.set("intent", intent);
+      submitForm(formData, { method: "post" });
+    },
+    [submitForm]
   );
 
   if (counts.all === 0) {
@@ -143,78 +337,48 @@ export default function SubmissionsPage() {
     );
   }
 
-  const rowMarkup = submissions.map((submission, index) => (
-    <IndexTable.Row
-      id={submission.id}
-      key={submission.id}
-      position={index}
-      onClick={() => navigate(`/app/submissions/${submission.id}`)}
-    >
-      <IndexTable.Cell>
-        <InlineStack gap="300" blockAlign="center">
-          {submission.thumbnailUrl && (
-            <Thumbnail
-              source={submission.thumbnailUrl}
-              alt={`Submission from ${submission.customerEmail}`}
-              size="small"
-            />
-          )}
-          <Text variant="bodyMd" fontWeight="bold" as="span">
-            {submission.customerEmail}
-          </Text>
-        </InlineStack>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span">{submission.campaignTitle}</Text>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Badge>{submission.contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        {submissionStatusBadge(submission.status)}
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        {submission.rewardStatus ? (
-          submission.rewardStatus === "APPLIED" ? (
-            <Badge tone="success">{`${submission.rewardMonths} mo applied`}</Badge>
-          ) : (
-            <Badge>{`${submission.rewardMonths} mo pending`}</Badge>
-          )
-        ) : (
-          <Text as="span" tone="subdued">—</Text>
-        )}
-      </IndexTable.Cell>
-      <IndexTable.Cell>
-        <Text as="span" tone="subdued">{submission.createdAt}</Text>
-      </IndexTable.Cell>
-    </IndexTable.Row>
-  ));
-
   return (
     <Page title="Submissions">
-      <Layout>
-        <Layout.Section>
-          <Card padding="0">
-            <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange}>
-              <IndexTable
-                resourceName={{ singular: "submission", plural: "submissions" }}
-                itemCount={submissions.length}
-                headings={[
-                  { title: "Customer" },
-                  { title: "Campaign" },
-                  { title: "Type" },
-                  { title: "Status" },
-                  { title: "Reward" },
-                  { title: "Submitted" },
-                ]}
-                selectable={false}
-              >
-                {rowMarkup}
-              </IndexTable>
-            </Tabs>
-          </Card>
-        </Layout.Section>
-      </Layout>
+      <BlockStack gap="400">
+        {/* Pending alert */}
+        {counts.pending > 0 && currentStatus !== "PENDING" && (
+          <Banner
+            tone="warning"
+            action={{
+              content: `Review ${counts.pending} pending`,
+              onAction: () => setSearchParams({ status: "PENDING" }),
+            }}
+          >
+            You have {counts.pending} submission
+            {counts.pending !== 1 ? "s" : ""} awaiting review.
+          </Banner>
+        )}
+
+        <Card padding="0">
+          <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange}>
+            <Box padding="400">
+              {submissions.length === 0 ? (
+                <Box padding="800">
+                  <Text as="p" alignment="center" tone="subdued">
+                    No submissions match this filter.
+                  </Text>
+                </Box>
+              ) : (
+                <BlockStack gap="400">
+                  {submissions.map((submission) => (
+                    <SubmissionCard
+                      key={submission.id}
+                      submission={submission}
+                      onNavigate={(id) => navigate(`/app/submissions/${id}`)}
+                      onQuickAction={handleQuickAction}
+                    />
+                  ))}
+                </BlockStack>
+              )}
+            </Box>
+          </Tabs>
+        </Card>
+      </BlockStack>
     </Page>
   );
 }
