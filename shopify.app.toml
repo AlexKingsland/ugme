@@ -6,7 +6,7 @@ application_url = "https://localhost:3458"
 embedded = true
 
 [access_scopes]
-scopes = ""
+scopes = "read_customers"
 
 [webhooks]
 api_version = "2026-10"
@@ -17,3 +17,8 @@ redirect_urls = [ "https://localhost:3458/api/auth" ]
 [build]
 include_config_on_deploy = true
 automatically_update_urls_on_dev = true
+
+[app_proxy]
+url = "https://localhost:3458/api/proxy"
+subpath = "ugme"
+prefix = "apps"

@@ -83,7 +83,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     captureSpecs = [];
   }
 
-  const submitUrl = `${new URL(request.url).origin}/submit/${campaign.id}`;
+  const submitUrl = `https://${campaign.shop.shopDomain}/apps/ugme/campaign/${campaign.id}`;
 
   return json({
     campaign: {
