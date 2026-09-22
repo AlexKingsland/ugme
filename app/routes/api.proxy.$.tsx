@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import prisma from "../db.server";
 import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
+import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl } from "../utils/r2.server";
 
 /**
  * App Proxy catch-all route.
@@ -144,8 +145,12 @@ async function fetchCustomerEmail(shopDomain: string, accessToken: string, custo
         },
       }
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.log("[UGME] fetchCustomerEmail failed:", res.status, await res.text().catch(() => ""));
+      return null;
+    }
     const data = await res.json();
+    console.log("[UGME] fetchCustomerEmail result:", data?.customer?.email);
     return data?.customer?.email || null;
   } catch {
     return null;
@@ -182,7 +187,7 @@ async function resolveRequest(request: Request) {
 export async function loader({ request }: LoaderFunctionArgs) {
   const resolved = await resolveRequest(request);
   if ("error" in resolved) return resolved.error;
-  const { shop, brandName, loggedInCustomerId, proxyPath } = resolved;
+  const { shop, brandName, loggedInCustomerId, proxyPath, url } = resolved;
 
 
   // Route: /campaign/:id/submitted
@@ -196,7 +201,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const submitMatch = proxyPath.match(/^campaign\/([^/]+)\/submit$/);
   if (submitMatch) {
     if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `/apps/ugme/campaign/${submitMatch[1]}/submit`);
-    return handleSubmitForm(submitMatch[1], shop, brandName, loggedInCustomerId);
+    return handleSubmitForm(submitMatch[1], shop, brandName, loggedInCustomerId, url);
   }
 
   // Route: /campaign/:id
@@ -435,7 +440,7 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
 
 // ── C9: Upload & Submit Form ────────────────────────────────────
 
-async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string) {
+async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, url: URL) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
     select: {
@@ -504,6 +509,19 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   const isVideo = campaign.contentType === "VIDEO";
   const mediaWord = isVideo ? "video" : "photo";
 
+  // Error banner for upload failures
+  const errorParam = url.searchParams.get("error");
+  let errorBannerHtml = "";
+  if (errorParam) {
+    const errorMsgs: Record<string, string> = {
+      no_file: "Please select a file to upload.",
+      too_large: "File is too large. Maximum size is 100 MB.",
+      upload_failed: "Upload failed. Please try again.",
+    };
+    const msg = errorMsgs[errorParam] || "Something went wrong. Please try again.";
+    errorBannerHtml = '<div style="background: #fef2f2; color: #991b1b; padding: 14px 16px; border-radius: var(--ugme-radius); margin-bottom: 20px; font-size: 14px;">' + msg + '</div>';
+  }
+
   const body = `
     <a href="/apps/ugme/campaign/${campaign.id}?shop=${shop.shopDomain}" style="display: inline-flex; align-items: center; gap: 4px; color: var(--ugme-muted); text-decoration: none; font-size: 14px; margin-bottom: 16px;">
       ← Back to brief
@@ -514,6 +532,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       ${escapeHtml(campaign.title)} · <span class="ugme-badge ugme-badge--reward" style="font-size: 12px; padding: 2px 8px;">${escapeHtml(reward)}</span>
     </p>
 
+    ${errorBannerHtml}
     <form id="submitForm" method="POST" action="/apps/ugme/campaign/${campaign.id}/submit?shop=${shop.shopDomain}" enctype="multipart/form-data">
 
       <!-- File upload area -->
@@ -523,7 +542,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
           Tap to choose your ${mediaWord}
         </div>
         <div id="uploadHint" style="color: var(--ugme-muted); font-size: 13px;">
-          ${isVideo ? "MP4 or MOV, max 500 MB" : "JPG or PNG, max 50 MB"}
+          ${isVideo ? "MP4 or MOV, max 100 MB" : "JPG or PNG, max 100 MB"}
         </div>
         <input type="file" id="fileInput" name="file" accept="${isVideo ? "video/mp4,video/quicktime,video/*" : "image/jpeg,image/png,image/*"}" style="display: none;" required />
       </div>
@@ -703,10 +722,12 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
 
 // ── C9 POST: Process submission ─────────────────────────────────
 
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
+
 async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, request: Request) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    select: { id: true, shopId: true, status: true, contentType: true },
+    select: { id: true, title: true, shopId: true, status: true, contentType: true },
   });
 
   if (!campaign || campaign.shopId !== shop.id || campaign.status !== "ACTIVE") {
@@ -729,34 +750,68 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
     });
   }
 
-  // Parse the form data
+  // Parse the multipart form data
   let description = "";
+  let file: File | null = null;
   try {
     const formData = await request.formData();
     description = (formData.get("message") as string) || "";
-    // For now, we use a placeholder content URL
-    // In production, the client will upload to R2 first and send the URL
-  } catch {
-    // Fallback if form parsing fails
+    file = formData.get("file") as File | null;
+  } catch (err) {
+    console.error("[UGME] Form parse error:", err);
+    return errorRedirect(shop.shopDomain, campaignId, "upload_failed");
   }
 
-  // Create the submission with a placeholder URL
-  // TODO: Replace with actual R2 upload URL from client-side upload
-  await prisma.submission.create({
+  if (!file || file.size === 0) {
+    return errorRedirect(shop.shopDomain, campaignId, "no_file");
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return errorRedirect(shop.shopDomain, campaignId, "too_large");
+  }
+
+  // Create the submission first (so we have an ID for the object key)
+  const submission = await prisma.submission.create({
     data: {
       campaignId,
       customerId: customer.id,
       contentType: campaign.contentType,
-      contentUrl: `https://placeholder.ugme.app/pending/${campaignId}/${customer.id}`,
+      contentUrl: "r2://pending", // temporary, updated after upload
+      fileBytes: file.size,
       description: description || null,
       rightsAccepted: true,
     },
   });
 
+  // Upload file to R2
+  try {
+    const objectKey = buildObjectKey(shop.shopDomain, campaign.title, submission.id, file.name);
+    const buffer = Buffer.from(await file.arrayBuffer());
+    await uploadToR2(objectKey, buffer, file.type || "application/octet-stream");
+
+    // Update submission with the real R2 key
+    await prisma.submission.update({
+      where: { id: submission.id },
+      data: { contentUrl: `r2://${objectKey}` },
+    });
+  } catch (err) {
+    console.error("[UGME] R2 upload error:", err);
+    // Clean up the submission record on upload failure
+    await prisma.submission.delete({ where: { id: submission.id } });
+    return errorRedirect(shop.shopDomain, campaignId, "upload_failed");
+  }
+
   // Redirect to confirmation
   return new Response(null, {
     status: 302,
     headers: { Location: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` },
+  });
+}
+
+function errorRedirect(shopDomain: string, campaignId: string, reason: string): Response {
+  return new Response(null, {
+    status: 302,
+    headers: { Location: `/apps/ugme/campaign/${campaignId}/submit?shop=${shopDomain}&error=${reason}` },
   });
 }
 
@@ -1032,8 +1087,19 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
   const isVideo = submission.contentType === "VIDEO";
   const mediaWord = isVideo ? "video" : "photo";
 
+  // Resolve R2 URLs to presigned download URLs for display
+  let displayUrl = submission.contentUrl;
+  const r2Key = extractKeyFromContentUrl(submission.contentUrl);
+  if (r2Key && r2Key !== "pending") {
+    try {
+      displayUrl = await getPresignedDownloadUrl(r2Key);
+    } catch (err) {
+      console.error("[UGME] R2 presign error:", err);
+    }
+  }
+
   // Media preview — show content if URL is not a placeholder
-  const isPlaceholder = submission.contentUrl.includes("placeholder.ugme.app");
+  const isPlaceholder = submission.contentUrl.includes("placeholder.ugme.app") || submission.contentUrl === "r2://pending";
   const mediaHtml = isPlaceholder
     ? `<div style="width: 100%; aspect-ratio: 16/9; background: var(--ugme-surface); border-radius: var(--ugme-radius); display: flex; align-items: center; justify-content: center; margin-bottom: 20px;">
         <div style="text-align: center; color: var(--ugme-muted);">
@@ -1042,8 +1108,8 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
         </div>
       </div>`
     : isVideo
-      ? `<video src="${escapeHtml(submission.contentUrl)}" style="width: 100%; max-height: 400px; object-fit: contain; background: #000; border-radius: var(--ugme-radius); margin-bottom: 20px;" controls></video>`
-      : `<img src="${escapeHtml(submission.contentUrl)}" alt="Submission" style="width: 100%; max-height: 400px; object-fit: contain; border-radius: var(--ugme-radius); margin-bottom: 20px; background: var(--ugme-surface);" />`;
+      ? `<video src="${escapeHtml(displayUrl)}" style="width: 100%; max-height: 400px; object-fit: contain; background: #000; border-radius: var(--ugme-radius); margin-bottom: 20px;" controls></video>`
+      : `<img src="${escapeHtml(displayUrl)}" alt="Submission" style="width: 100%; max-height: 400px; object-fit: contain; border-radius: var(--ugme-radius); margin-bottom: 20px; background: var(--ugme-surface);" />`;
 
   // Rejection reason
   const rejectionHtml = submission.status === "REJECTED" && submission.rejectionReason
@@ -1144,7 +1210,7 @@ async function handleDeleteSubmission(submissionId: string, shop: ShopInfo, bran
 
   const submission = await prisma.submission.findUnique({
     where: { id: submissionId },
-    select: { id: true, customerId: true, status: true, campaignId: true },
+    select: { id: true, customerId: true, status: true, campaignId: true, contentUrl: true },
   });
 
   if (!submission || submission.customerId !== customer.id) {
@@ -1164,6 +1230,17 @@ async function handleDeleteSubmission(submissionId: string, shop: ShopInfo, bran
     `;
     const html = proxyLayout({ title: "Can't Delete", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
+
+  // Delete the file from R2
+  const r2Key = extractKeyFromContentUrl(submission.contentUrl);
+  if (r2Key) {
+    try {
+      await deleteObject(r2Key);
+    } catch (err) {
+      console.error("[UGME] R2 delete error:", err);
+      // Non-fatal — continue with DB deletion
+    }
   }
 
   // Delete the submission

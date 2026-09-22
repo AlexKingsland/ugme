@@ -13,11 +13,20 @@ import {
   Select,
   InlineGrid,
   ProgressBar,
-  Divider,
+  Popover,
+  ActionList,
+  Icon,
 } from "@shopify/polaris";
+import {
+  MenuHorizontalIcon,
+  ImportIcon,
+  CheckIcon,
+  XIcon,
+} from "@shopify/polaris-icons";
 import { useState, useCallback } from "react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
+import { extractKeyFromContentUrl, getPresignedDownloadUrl, deleteObject } from "../../utils/r2.server";
 
 const TIER_LIMITS: Record<string, { bytes: number; label: string }> = {
   TIER_10GB:  { bytes: 10 * 1024 * 1024 * 1024,   label: "10 GB" },
@@ -63,13 +72,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const mediaFilter = url.searchParams.get("media") || "all";
   const sort = url.searchParams.get("sort") || "oldest";
   const productFilter = url.searchParams.get("product") || "all";
+  const usedFilter = url.searchParams.get("used") || "all";
 
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) {
     return json({
       items: [], campaigns: [], products: [], counts: { pending: 0, approved: 0 },
       storage: { usedBytes: 0, tier: "TIER_10GB" },
-      tab, campaignFilter, mediaFilter, sort, productFilter,
+      tab, campaignFilter, mediaFilter, sort, productFilter, usedFilter,
     });
   }
 
@@ -113,6 +123,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (mediaFilter !== "all") {
     where.contentType = mediaFilter;
   }
+  if (tab === "approved" && usedFilter !== "all") {
+    where.markedUsed = usedFilter === "used";
+  }
 
   const items = await prisma.submission.findMany({
     where,
@@ -139,27 +152,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     _sum: { fileBytes: true },
   });
 
+  // Resolve R2 URLs to presigned download URLs
+  const resolvedItems = await Promise.all(
+    items.map(async (s) => {
+      let resolvedUrl = s.contentUrl;
+      const r2Key = extractKeyFromContentUrl(s.contentUrl);
+      if (r2Key && r2Key !== "pending") {
+        try {
+          resolvedUrl = await getPresignedDownloadUrl(r2Key);
+        } catch {
+          resolvedUrl = s.contentUrl;
+        }
+      }
+      return {
+        id: s.id,
+        email: s.customer.email,
+        displayName: s.customer.email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+        campaignTitle: s.campaign.title,
+        description: s.description || "",
+        contentType: s.contentType,
+        contentUrl: resolvedUrl,
+        thumbnailUrl: s.thumbnailUrl,
+        durationSecs: s.durationSecs,
+        fileBytes: s.fileBytes,
+        status: s.status,
+        createdAt: s.createdAt,
+        rewardMonths: s.campaign.rewardMonths,
+        discountType: s.campaign.discountType,
+        discountValue: s.campaign.discountValue,
+        usageTags: JSON.parse(s.usageTags || "[]"),
+        rightsAccepted: s.rightsAccepted,
+        markedUsed: s.markedUsed,
+      };
+    })
+  );
+
   return json({
-    items: items.map((s) => ({
-      id: s.id,
-      email: s.customer.email,
-      displayName: s.customer.email.split("@")[0].replace(/[._]/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
-      campaignTitle: s.campaign.title,
-      description: s.description || "",
-      contentType: s.contentType,
-      contentUrl: s.contentUrl,
-      thumbnailUrl: s.thumbnailUrl,
-      durationSecs: s.durationSecs,
-      fileBytes: s.fileBytes,
-      status: s.status,
-      createdAt: s.createdAt,
-      rewardMonths: s.campaign.rewardMonths,
-      discountType: s.campaign.discountType,
-      discountValue: s.campaign.discountValue,
-      usageTags: JSON.parse(s.usageTags || "[]"),
-      rightsAccepted: s.rightsAccepted,
-      markedUsed: s.markedUsed,
-    })),
+    items: resolvedItems,
     campaigns: campaigns.map((c) => ({ id: c.id, title: c.title })),
     counts,
     products,
@@ -172,6 +201,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     mediaFilter,
     sort,
     productFilter,
+    usedFilter,
   });
 };
 
@@ -244,11 +274,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: true });
   }
 
+  if (actionType === "delete") {
+    const submissionId = formData.get("submissionId") as string;
+    const submission = await prisma.submission.findUnique({
+      where: { id: submissionId },
+      select: { id: true, contentUrl: true, campaign: { select: { shopId: true } } },
+    });
+    if (!submission || submission.campaign.shopId !== shop.id) {
+      return json({ error: "Not found" }, { status: 404 });
+    }
+    // Delete from R2
+    const r2Key = extractKeyFromContentUrl(submission.contentUrl);
+    if (r2Key && r2Key !== "pending") {
+      try { await deleteObject(r2Key); } catch (e) { console.error("[UGME] R2 delete failed:", e); }
+    }
+    // Delete associated rewards, then the submission
+    await prisma.reward.deleteMany({ where: { submissionId } });
+    await prisma.submission.delete({ where: { id: submissionId } });
+    return json({ success: true });
+  }
+
   return json({ error: "Unknown action" }, { status: 400 });
 };
 
 export default function Library() {
-  const { items, campaigns, counts, storage, tab, campaignFilter, mediaFilter, sort, products, productFilter } = useLoaderData<typeof loader>();
+  const { items, campaigns, counts, storage, tab, campaignFilter, mediaFilter, sort, products, productFilter, usedFilter } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const isActing = navigation.state === "submitting";
@@ -259,6 +309,8 @@ export default function Library() {
   const [currentProduct, setCurrentProduct] = useState(productFilter);
   const [currentSort, setCurrentSort] = useState(sort);
   const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
+  const [currentUsed, setCurrentUsed] = useState(usedFilter);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   const tierInfo = TIER_LIMITS[storage.tier] || TIER_LIMITS.TIER_10GB;
   const storagePct = Math.min((storage.usedBytes / tierInfo.bytes) * 100, 100);
@@ -270,8 +322,9 @@ export default function Library() {
     params.set("media", overrides.media ?? currentMedia);
     params.set("sort", overrides.sort ?? currentSort);
     params.set("product", overrides.product ?? currentProduct);
+    params.set("used", overrides.used ?? currentUsed);
     submit(params, { method: "get" });
-  }, [currentTab, currentCampaign, currentMedia, currentSort, currentProduct, submit]);
+  }, [currentTab, currentCampaign, currentMedia, currentSort, currentProduct, currentUsed, submit]);
 
   const handleTabChange = useCallback((t: string) => {
     setCurrentTab(t);
@@ -309,6 +362,14 @@ export default function Library() {
       return next;
     });
   }, []);
+
+  const handleDelete = useCallback((id: string) => {
+    if (!confirm("Delete this submission? This will permanently remove the file and cannot be undone.")) return;
+    const formData = new FormData();
+    formData.set("_action", "delete");
+    formData.set("submissionId", id);
+    submit(formData, { method: "post" });
+  }, [submit]);
 
   const isPending = currentTab === "pending";
 
@@ -431,6 +492,23 @@ export default function Library() {
                 />
               </Box>
             )}
+            {!isPending && (
+              <Box width="160px">
+                <Select
+                  label="Status"
+                  options={[
+                    { label: "All", value: "all" },
+                    { label: "Used", value: "used" },
+                    { label: "Unused", value: "unused" },
+                  ]}
+                  value={currentUsed}
+                  onChange={(v) => {
+                    setCurrentUsed(v);
+                    navigate({ used: v });
+                  }}
+                />
+              </Box>
+            )}
             <Box>
               <Text as="span" variant="bodySm" tone="subdued">
                 {items.length} {isPending ? "submission" : "asset"}{items.length !== 1 ? "s" : ""}
@@ -465,17 +543,32 @@ export default function Library() {
         ) : isPending ? (
           /* ───── PENDING: Review list ───── */
           <BlockStack gap="200">
-            {items.map((sub: any) => (
+            {items.map((sub: any) => {
+              const hasUrl = sub.contentUrl.startsWith("http");
+              return (
               <Card key={sub.id}>
                 <InlineStack gap="400" blockAlign="center" wrap={false}>
                   {/* Thumbnail */}
                   <Link to={`/app/library/${sub.id}`} style={{ textDecoration: "none" }}>
-                    <div style={{ position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", background: "#f3f3f3", flexShrink: 0 }}>
-                      <img
-                        src={sub.thumbnailUrl || "https://placehold.co/64x64/e5e7eb/9ca3af?text=?"}
-                        alt=""
-                        style={{ width: 64, height: 64, objectFit: "cover", display: "block" }}
-                      />
+                    <div style={{ position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", background: "#1a1a1a", flexShrink: 0 }}>
+                      {sub.contentType === "VIDEO" && hasUrl ? (
+                        <video
+                          src={sub.contentUrl}
+                          preload="metadata"
+                          muted
+                          style={{ width: 64, height: 64, objectFit: "cover", display: "block" }}
+                        />
+                      ) : sub.contentType === "PHOTO" && hasUrl ? (
+                        <img
+                          src={sub.contentUrl}
+                          alt=""
+                          style={{ width: 64, height: 64, objectFit: "cover", display: "block" }}
+                        />
+                      ) : (
+                        <div style={{ width: 64, height: 64, display: "flex", alignItems: "center", justifyContent: "center", color: "#666", fontSize: 10 }}>
+                          {sub.contentType === "VIDEO" ? "VID" : "IMG"}
+                        </div>
+                      )}
                       {sub.contentType === "VIDEO" && sub.durationSecs && (
                         <div style={{
                           position: "absolute", bottom: 2, right: 4,
@@ -529,7 +622,8 @@ export default function Library() {
                   </InlineStack>
                 </InlineStack>
               </Card>
-            ))}
+              );
+            })}
             <Text as="p" variant="bodySm" tone="subdued">
               Approving issues the reward immediately. Denied submissions are permanently discarded.
             </Text>
@@ -537,95 +631,147 @@ export default function Library() {
         ) : (
           /* ───── APPROVED: Asset grid ───── */
           <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="400">
-            {items.map((asset: any) => (
-              <Card key={asset.id}>
-                <BlockStack gap="300">
-                  {/* Thumbnail */}
-                  <div
-                    style={{
-                      position: "relative",
-                      borderRadius: 8,
-                      overflow: "hidden",
-                      background: "#f3f3f3",
-                      aspectRatio: "4/3",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => toggleSelect(asset.id)}
-                  >
-                    <img
-                      src={asset.thumbnailUrl || "https://placehold.co/400x300/e5e7eb/9ca3af?text=?"}
-                      alt={asset.description}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                    />
-                    {asset.contentType === "VIDEO" && asset.durationSecs && (
+            {items.map((asset: any) => {
+              const hasResolvedUrl = asset.contentUrl.startsWith("http");
+              return (
+                <Card key={asset.id}>
+                  <BlockStack gap="300">
+                    {/* Clickable thumbnail */}
+                    <Link to={`/app/library/${asset.id}`} style={{ textDecoration: "none" }}>
                       <div style={{
-                        position: "absolute", top: 8, right: 8,
-                        background: "rgba(0,0,0,0.7)", color: "#fff",
-                        fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 4,
-                        display: "flex", alignItems: "center", gap: 4,
+                        position: "relative", borderRadius: 8, overflow: "hidden",
+                        background: "#1a1a1a", aspectRatio: "4/3", cursor: "pointer",
                       }}>
-                        ▶ {formatDuration(asset.durationSecs)}
-                      </div>
-                    )}
-                    {selectedAssets.has(asset.id) && (
-                      <div style={{
-                        position: "absolute", top: 8, left: 8,
-                        width: 24, height: 24, borderRadius: 6,
-                        background: "#1a1a1a", color: "#fff",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 14, fontWeight: 700,
-                      }}>
-                        ✓
-                      </div>
-                    )}
-                    {asset.markedUsed && (
-                      <div style={{
-                        position: "absolute", bottom: 8, left: 8,
-                        background: "rgba(0,0,0,0.6)", color: "#fff",
-                        fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4,
-                      }}>
-                        Used
-                      </div>
-                    )}
-                  </div>
+                        {asset.contentType === "VIDEO" && hasResolvedUrl ? (
+                          <video
+                            src={asset.contentUrl}
+                            preload="metadata"
+                            muted
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                          />
+                        ) : asset.contentType === "PHOTO" && hasResolvedUrl ? (
+                          <img
+                            src={asset.contentUrl}
+                            alt={asset.description || "Photo submission"}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                          />
+                        ) : (
+                          <div style={{
+                            width: "100%", height: "100%",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            color: "#666", fontSize: 14,
+                          }}>
+                            {asset.contentType === "VIDEO" ? "Video" : "Photo"}
+                          </div>
+                        )}
 
-                  {/* Info */}
-                  <BlockStack gap="100">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Text as="p" variant="bodyMd" fontWeight="semibold">{asset.displayName}</Text>
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        · {(asset.fileBytes / (1024 * 1024)).toFixed(0)} MB
-                      </Text>
+                        {/* Video duration badge */}
+                        {asset.contentType === "VIDEO" && (
+                          <div style={{
+                            position: "absolute", bottom: 8, right: 8,
+                            background: "rgba(0,0,0,0.75)", color: "#fff",
+                            fontSize: 11, fontWeight: 600, padding: "2px 6px", borderRadius: 4,
+                            pointerEvents: "none",
+                          }}>
+                            {asset.durationSecs ? formatDuration(asset.durationSecs) : "Video"}
+                          </div>
+                        )}
+
+                        {/* Used badge */}
+                        {asset.markedUsed && (
+                          <div style={{
+                            position: "absolute", top: 8, left: 8,
+                            background: "#fff", color: "#1a1a1a",
+                            fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
+                            textTransform: "uppercase", letterSpacing: "0.5px",
+                            pointerEvents: "none",
+                          }}>
+                            Used
+                          </div>
+                        )}
+
+                        {/* Selection checkmark */}
+                        {selectedAssets.has(asset.id) && (
+                          <div style={{
+                            position: "absolute", top: 8, right: 8,
+                            width: 24, height: 24, borderRadius: "50%",
+                            background: "#2c6ecb", display: "flex",
+                            alignItems: "center", justifyContent: "center",
+                            pointerEvents: "none",
+                          }}>
+                            <Icon source={CheckIcon}  />
+                          </div>
+                        )}
+                      </div>
+                    </Link>
+
+                    {/* Info row with ⋯ menu */}
+                    <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                      <Link to={`/app/library/${asset.id}`} style={{ textDecoration: "none", color: "inherit", flex: 1, minWidth: 0, overflow: "hidden" }}>
+                        <BlockStack gap="050">
+                          <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>{asset.displayName}</Text>
+                          <Text as="span" variant="bodySm" tone="subdued" truncate>
+                            {asset.campaignTitle} · {formatBytes(asset.fileBytes)}
+                          </Text>
+                        </BlockStack>
+                      </Link>
+                      <div style={{ flexShrink: 0 }}>
+                        <Popover
+                          active={openMenuId === asset.id}
+                          activator={
+                            <Button
+                              icon={MenuHorizontalIcon}
+                              variant="tertiary"
+                              size="slim"
+                              onClick={() => setOpenMenuId(openMenuId === asset.id ? null : asset.id)}
+                              accessibilityLabel="Actions"
+                            />
+                          }
+                          onClose={() => setOpenMenuId(null)}
+                          preferredAlignment="right"
+                        >
+                          <ActionList
+                            items={[
+                              ...(hasResolvedUrl
+                                ? [{
+                                    content: "Download",
+                                    icon: ImportIcon,
+                                    onAction: () => {
+                                      setOpenMenuId(null);
+                                      const a = document.createElement("a");
+                                      a.href = asset.contentUrl;
+                                      a.download = "";
+                                      a.target = "_blank";
+                                      a.click();
+                                    },
+                                  }]
+                                : []),
+                              {
+                                content: asset.markedUsed ? "Unmark used" : "Mark used",
+                                icon: asset.markedUsed ? XIcon : CheckIcon,
+                                onAction: () => {
+                                  setOpenMenuId(null);
+                                  handleMarkUsed(asset.id, !asset.markedUsed);
+                                },
+                              },
+                              {
+                                content: "Delete",
+                                icon: XIcon,
+                                destructive: true,
+                                onAction: () => {
+                                  setOpenMenuId(null);
+                                  handleDelete(asset.id);
+                                },
+                              },
+                            ]}
+                          />
+                        </Popover>
+                      </div>
                     </InlineStack>
-                    {asset.description && (
-                      <Text as="p" variant="bodySm" tone="subdued">{asset.description}</Text>
-                    )}
                   </BlockStack>
-
-                  {/* Tags */}
-                  <InlineStack gap="200" wrap>
-                    {asset.usageTags.map((tag: string, i: number) => (
-                      <Badge key={i} tone="success">{tag}</Badge>
-                    ))}
-                    {asset.rightsAccepted && (
-                      <Badge tone="info">Rights</Badge>
-                    )}
-                  </InlineStack>
-
-                  {/* Actions */}
-                  <InlineStack gap="200">
-                    <Button size="slim" url={`/app/library/${asset.id}`}>View</Button>
-                    <Button size="slim">Download</Button>
-                    <Button
-                      size="slim"
-                      onClick={() => handleMarkUsed(asset.id, !asset.markedUsed)}
-                    >
-                      {asset.markedUsed ? "Unmark" : "Mark used"}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
           </InlineGrid>
         )}
       </BlockStack>

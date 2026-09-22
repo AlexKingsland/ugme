@@ -1,6 +1,7 @@
 import { json, redirect } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { extractKeyFromContentUrl, getPresignedDownloadUrl, deleteObject } from "../../utils/r2.server";
 import {
   Page,
   Layout,
@@ -43,6 +44,19 @@ function formatReward(discountType: string, discountValue: number, months: numbe
   return `${months} months`;
 }
 
+
+/**
+ * Resolve a contentUrl to a viewable URL.
+ * R2 keys (r2://...) get a presigned download URL; others pass through.
+ */
+async function resolveContentUrl(contentUrl: string): Promise<string> {
+  const key = extractKeyFromContentUrl(contentUrl);
+  if (key && key !== "pending") {
+    return getPresignedDownloadUrl(key);
+  }
+  return contentUrl;
+}
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
@@ -82,7 +96,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       campaignTitle: submission.campaign.title,
       campaignMoment: submission.campaign.moment,
       contentType: submission.contentType,
-      contentUrl: submission.contentUrl,
+      contentUrl: await resolveContentUrl(submission.contentUrl),
       thumbnailUrl: submission.thumbnailUrl,
       durationSecs: submission.durationSecs,
       description: submission.description,
@@ -154,6 +168,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         reviewNote: note || null,
       },
     });
+
+    // Delete the file from R2 to free storage
+    const r2Key = extractKeyFromContentUrl(submission.contentUrl);
+    if (r2Key) {
+      try {
+        await deleteObject(r2Key);
+      } catch (err) {
+        console.error("[UGME] R2 delete error on reject:", err);
+        // Non-fatal — submission is still rejected even if R2 delete fails
+      }
+    }
+
     return json({ success: true, action: "denied" });
   }
 
@@ -236,41 +262,40 @@ export default function SubmissionDetail() {
                 justifyContent: "center",
               }}>
                 {submission.contentType === "VIDEO" ? (
-                  <>
-                    <img
-                      src={submission.thumbnailUrl || "https://placehold.co/400x600/1a1a1a/666?text=Video"}
-                      alt="Video thumbnail"
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  submission.contentUrl.startsWith("http") ? (
+                    <video
+                      src={submission.contentUrl}
+                      controls
+                      style={{ width: "100%", height: "100%", objectFit: "contain" }}
                     />
-                    <div style={{
-                      position: "absolute", inset: 0,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      background: "rgba(0,0,0,0.3)",
-                    }}>
+                  ) : (
+                    <>
+                      <img
+                        src={submission.thumbnailUrl || "https://placehold.co/400x600/1a1a1a/666?text=Video"}
+                        alt="Video thumbnail"
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
                       <div style={{
-                        width: 64, height: 64, borderRadius: "50%",
-                        background: "rgba(255,255,255,0.9)",
+                        position: "absolute", inset: 0,
                         display: "flex", alignItems: "center", justifyContent: "center",
+                        background: "rgba(0,0,0,0.3)",
                       }}>
                         <div style={{
-                          width: 0, height: 0,
-                          borderTop: "14px solid transparent",
-                          borderBottom: "14px solid transparent",
-                          borderLeft: "22px solid #1a1a1a",
-                          marginLeft: 4,
-                        }} />
+                          width: 64, height: 64, borderRadius: "50%",
+                          background: "rgba(255,255,255,0.9)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <div style={{
+                            width: 0, height: 0,
+                            borderTop: "14px solid transparent",
+                            borderBottom: "14px solid transparent",
+                            borderLeft: "22px solid #1a1a1a",
+                            marginLeft: 4,
+                          }} />
+                        </div>
                       </div>
-                    </div>
-                    {submission.durationSecs && (
-                      <div style={{
-                        position: "absolute", bottom: 12, right: 12,
-                        background: "rgba(0,0,0,0.7)", color: "#fff",
-                        fontSize: 13, fontWeight: 600, padding: "4px 8px", borderRadius: 6,
-                      }}>
-                        {formatDuration(submission.durationSecs)}
-                      </div>
-                    )}
-                  </>
+                    </>
+                  )
                 ) : (
                   <img
                     src={submission.thumbnailUrl || submission.contentUrl}
