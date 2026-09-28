@@ -46,7 +46,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     title: c.title,
     status: c.status,
     moment: c.moment,
-    rewardMonths: c.rewardMonths,
+    rewardCycles: c.rewardCycles,
+    rewardFrequency: c.rewardFrequency,
     totalSubmissions: c._count.submissions,
     pendingSubmissions: c.submissions.length,
     maxSubmissions: c.maxSubmissions,
@@ -139,7 +140,7 @@ export default function CampaignsPage() {
         )}
       </IndexTable.Cell>
       <IndexTable.Cell>
-        <Text as="span">{campaign.rewardMonths} mo free</Text>
+        <Text as="span">{campaign.rewardCycles} {campaign.rewardFrequency === "DAY" ? "d" : campaign.rewardFrequency === "WEEK" ? "wk" : "mo"} free</Text>
       </IndexTable.Cell>
       <IndexTable.Cell>
         <Text as="span" tone="subdued">

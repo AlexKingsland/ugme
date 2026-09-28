@@ -1,4 +1,5 @@
 import { json } from "@remix-run/node";
+import { approveSubmission } from "../../utils/approval.server";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, Link } from "@remix-run/react";
 import {
@@ -57,11 +58,16 @@ function formatDuration(secs: number | null): string {
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `0:${String(s).padStart(2, "0")}`;
 }
 
-function formatReward(discountType: string, discountValue: number, months: number): string {
-  if (discountType === "FREE") return `${months} mo free`;
-  if (discountType === "FIXED_AMOUNT") return `$${discountValue}/mo × ${months} mo`;
-  if (discountType === "PERCENTAGE") return `${discountValue}% off × ${months} mo`;
-  return `${months} mo`;
+function frequencyShort(freq: string): string {
+  return freq === "DAY" ? "d" : freq === "WEEK" ? "wk" : "mo";
+}
+
+function formatReward(discountType: string, discountValue: number, cycles: number, frequency: string = "MONTH"): string {
+  const u = frequencyShort(frequency);
+  if (discountType === "FREE") return `${cycles} ${u} free`;
+  if (discountType === "FIXED_AMOUNT") return `$${discountValue}/${u} × ${cycles} ${u}`;
+  if (discountType === "PERCENTAGE") return `${discountValue}% off × ${cycles} ${u}`;
+  return `${cycles} ${u}`;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -131,7 +137,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where,
     include: {
       customer: { select: { email: true } },
-      campaign: { select: { title: true, rewardMonths: true, discountType: true, discountValue: true } },
+      campaign: { select: { title: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true } },
     },
     orderBy: { createdAt: tab === "pending" ? (sort === "oldest" ? "asc" : "desc") : "desc" },
   });
@@ -177,7 +183,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         fileBytes: s.fileBytes,
         status: s.status,
         createdAt: s.createdAt,
-        rewardMonths: s.campaign.rewardMonths,
+        rewardCycles: s.campaign.rewardCycles,
+        rewardFrequency: s.campaign.rewardFrequency,
         discountType: s.campaign.discountType,
         discountValue: s.campaign.discountValue,
         usageTags: JSON.parse(s.usageTags || "[]"),
@@ -215,35 +222,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (actionType === "approve") {
     const submissionId = formData.get("submissionId") as string;
-    const submission = await prisma.submission.findUnique({
-      where: { id: submissionId },
-      include: { campaign: true },
-    });
-    if (!submission || submission.campaign.shopId !== shop.id) {
-      return json({ error: "Not found" }, { status: 404 });
+    try {
+      const result = await approveSubmission({ submissionId, shop });
+      return json({ success: true, ...result });
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : "Approval failed" }, { status: 400 });
     }
-    await prisma.submission.update({
-      where: { id: submissionId },
-      data: {
-        status: "APPROVED",
-        reviewedAt: new Date(),
-        rightsAccepted: true,
-        usageTags: JSON.stringify(["Social + Product Pages"]),
-      },
-    });
-    await prisma.reward.upsert({
-      where: { submissionId },
-      update: { status: "APPLIED", appliedAt: new Date() },
-      create: {
-        submissionId,
-        customerId: submission.customerId,
-        months: submission.campaign.rewardMonths,
-        discountProvider: "SHOPIFY_NATIVE",
-        status: "APPLIED",
-        appliedAt: new Date(),
-      },
-    });
-    return json({ success: true });
   }
 
   if (actionType === "deny") {
@@ -594,7 +578,7 @@ export default function Library() {
                           {sub.contentType === "VIDEO" ? "Video" : "Photo"}{sub.description ? `: ${sub.description}` : ""}
                         </Text>
                         <Text as="span" variant="bodySm" tone="subdued">
-                          Waiting {timeAgo(sub.createdAt)} · {formatReward(sub.discountType, sub.discountValue, sub.rewardMonths)} reward
+                          Waiting {timeAgo(sub.createdAt)} · {formatReward(sub.discountType, sub.discountValue, sub.rewardCycles, sub.rewardFrequency)} reward
                         </Text>
                       </BlockStack>
                     </Link>

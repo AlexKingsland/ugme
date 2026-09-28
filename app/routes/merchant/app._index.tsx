@@ -82,7 +82,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     select: {
       id: true,
       title: true,
-      rewardMonths: true,
+      rewardCycles: true, rewardFrequency: true,
       productTitle: true,
       productImageUrl: true,
       contentType: true,
@@ -310,7 +310,7 @@ export default function Dashboard() {
                           <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
                             <Badge>{campaign.contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
                             <Text as="span" variant="bodySm" tone="subdued">
-                              {`${campaign._count.submissions} sub${campaign._count.submissions !== 1 ? "s" : ""} · ${campaign.rewardMonths}mo`}
+                              {`${campaign._count.submissions} sub${campaign._count.submissions !== 1 ? "s" : ""} · ${campaign.rewardCycles}${campaign.rewardFrequency === "DAY" ? "d" : campaign.rewardFrequency === "WEEK" ? "wk" : "mo"}`}
                             </Text>
                           </div>
                         </div>

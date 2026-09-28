@@ -1,6 +1,6 @@
 import { json, redirect } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { useSubmit, useNavigation, useActionData, useLoaderData, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -37,8 +37,12 @@ const STEPS = [
 
 // ── Loader / Action ─────────────────────────────────────────────
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-  return json({});
+  const { session } = await authenticate.admin(request);
+  const shop = await prisma.shop.findUnique({
+    where: { shopDomain: session.shop },
+    select: { providerConnected: true },
+  });
+  return json({ providerConnected: shop?.providerConnected ?? false });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -57,7 +61,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const contentType = formData.get("contentType") as string;
   const discountType = formData.get("discountType") as string;
   const discountValue = parseFloat(formData.get("discountValue") as string) || 0;
-  const rewardMonths = parseInt(formData.get("rewardMonths") as string, 10) || 1;
+  const rewardCycles = parseInt(formData.get("rewardCycles") as string, 10) || 1;
+  const rewardFrequency = (formData.get("rewardFrequency") as string) || "MONTH";
   const maxSubmissions = formData.get("maxSubmissions")
     ? parseInt(formData.get("maxSubmissions") as string, 10)
     : null;
@@ -73,7 +78,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const errors: string[] = [];
   if (!title?.trim()) errors.push("Title is required.");
   if (!moment?.trim()) errors.push("Creative moment is required.");
-  if (rewardMonths < 1 || rewardMonths > 12) errors.push("Reward months must be 1-12.");
+  if (rewardCycles < 1 || rewardCycles > 12) errors.push("Reward months must be 1-12.");
   if (discountType === "FIXED_AMOUNT" && discountValue <= 0) errors.push("Discount amount must be greater than 0.");
   if (discountType === "PERCENTAGE" && (discountValue <= 0 || discountValue > 100)) errors.push("Discount percentage must be between 1-100.");
   if (startDate && endDate && endDate <= startDate) errors.push("End date must be after start date.");
@@ -95,7 +100,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       contentType: contentType as any,
       discountType: discountType as any,
       discountValue,
-      rewardMonths,
+      rewardCycles,
+      rewardFrequency: rewardFrequency as any,
       maxSubmissions,
       startDate,
       endDate,
@@ -151,16 +157,51 @@ function Stepper({ currentStep }: { currentStep: number }) {
 }
 
 // ── Helper: format reward text ──────────────────────────────────
-function formatReward(discountType: string, discountValue: string, rewardMonths: number): string {
-  const months = `${rewardMonths} month${rewardMonths !== 1 ? "s" : ""}`;
-  if (discountType === "FREE") return `Free for ${months}`;
-  if (discountType === "FIXED_AMOUNT") return `$${discountValue}/mo off for ${months}`;
-  if (discountType === "PERCENTAGE") return `${discountValue}% off for ${months}`;
-  return months;
+function frequencyUnit(freq: string, count: number): string {
+  const units: Record<string, [string, string]> = {
+    DAY: ["day", "days"], WEEK: ["week", "weeks"], MONTH: ["month", "months"],
+  };
+  const [singular, plural] = units[freq] || units.MONTH;
+  return count === 1 ? singular : plural;
+}
+
+function formatReward(discountType: string, discountValue: string, rewardCycles: number, rewardFrequency: string = "MONTH"): string {
+  const unit = `${rewardCycles} ${frequencyUnit(rewardFrequency, rewardCycles)}`;
+  if (discountType === "FREE") return `Free for ${unit}`;
+  if (discountType === "FIXED_AMOUNT") return `$${discountValue} off × ${unit}`;
+  if (discountType === "PERCENTAGE") return `${discountValue}% off × ${unit}`;
+  return unit;
 }
 
 // ── Main component ──────────────────────────────────────────────
 export default function NewCampaignWizard() {
+  const { providerConnected } = useLoaderData<typeof loader>();
+
+  if (!providerConnected) {
+    return (
+      <Page
+        title="New campaign"
+        backAction={{ content: "Campaigns", url: "/app/campaigns" }}
+      >
+        <Layout>
+          <Layout.Section>
+            <Banner
+              title="Connect your subscription provider first"
+              tone="warning"
+              action={{ content: "Go to Settings", url: "/app/settings" }}
+            >
+              <p>
+                Before creating a campaign, you need to connect and verify your
+                subscription provider API in Settings. This allows UGME to apply
+                discount rewards when you approve customer submissions.
+              </p>
+            </Banner>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
+
   const navigation = useNavigation();
   const submit = useSubmit();
   const actionData = useActionData<typeof action>();
@@ -191,7 +232,8 @@ export default function NewCampaignWizard() {
   // Reward
   const [discountType, setDiscountType] = useState("FREE");
   const [discountValue, setDiscountValue] = useState("");
-  const [rewardMonths, setRewardMonths] = useState(1);
+  const [rewardCycles, setRewardCycles] = useState(1);
+  const [rewardFrequency, setRewardFrequency] = useState("MONTH");
   const [hasMaxSubmissions, setHasMaxSubmissions] = useState(false);
   const [maxSubmissions, setMaxSubmissions] = useState("");
   const [hasDateRange, setHasDateRange] = useState(false);
@@ -255,16 +297,16 @@ export default function NewCampaignWizard() {
     switch (step) {
       case 0: return title.trim().length > 0 && moment.trim().length > 0 && productId.length > 0;
       case 1: {
-        if (discountType === "FREE") return rewardMonths >= 1;
-        if (discountType === "FIXED_AMOUNT") return rewardMonths >= 1 && parseFloat(discountValue) > 0;
-        if (discountType === "PERCENTAGE") return rewardMonths >= 1 && parseFloat(discountValue) > 0 && parseFloat(discountValue) <= 100;
+        if (discountType === "FREE") return rewardCycles >= 1;
+        if (discountType === "FIXED_AMOUNT") return rewardCycles >= 1 && parseFloat(discountValue) > 0;
+        if (discountType === "PERCENTAGE") return rewardCycles >= 1 && parseFloat(discountValue) > 0 && parseFloat(discountValue) <= 100;
         return false;
       }
       case 2: return rightsAcknowledged;
       case 3: return true;
       default: return false;
     }
-  }, [step, title, moment, rewardMonths, discountType, discountValue, rightsAcknowledged]);
+  }, [step, title, moment, rewardCycles, rewardFrequency, discountType, discountValue, rightsAcknowledged]);
 
   // Build specs array from the fixed fields
   const buildSpecs = useCallback(() => {
@@ -286,7 +328,7 @@ export default function NewCampaignWizard() {
     return specs;
   }, [orientation, aspectRatio, quality, format, contentType, duration]);
 
-  const rewardLabel = formatReward(discountType, discountValue, rewardMonths);
+  const rewardLabel = formatReward(discountType, discountValue, rewardCycles, rewardFrequency);
 
   const handlePublish = useCallback(
     (asDraft: boolean) => {
@@ -303,7 +345,8 @@ export default function NewCampaignWizard() {
       formData.set("contentType", contentType);
       formData.set("discountType", discountType);
       formData.set("discountValue", discountType === "FREE" ? "0" : discountValue);
-      formData.set("rewardMonths", String(rewardMonths));
+      formData.set("rewardCycles", String(rewardCycles));
+      formData.set("rewardFrequency", rewardFrequency);
       if (hasMaxSubmissions && maxSubmissions) formData.set("maxSubmissions", maxSubmissions);
       if (hasDateRange) {
         if (startDate) formData.set("startDate", startDate);
@@ -313,7 +356,7 @@ export default function NewCampaignWizard() {
       formData.set("saveAsDraft", String(asDraft));
       submit(formData, { method: "post" });
     },
-    [title, moment, contentType, discountType, discountValue, rewardMonths, maxSubmissions, startDate, endDate, hasDateRange, hasMaxSubmissions, buildSpecs, requirements, submit],
+    [title, moment, contentType, discountType, discountValue, rewardCycles, rewardFrequency, maxSubmissions, startDate, endDate, hasDateRange, hasMaxSubmissions, buildSpecs, requirements, submit],
   );
 
   // ── Step 0: Campaign ──────────────────────────────────────────
@@ -602,7 +645,7 @@ export default function NewCampaignWizard() {
             {/* Discount value (only for non-free) */}
             {discountType !== "FREE" && (
               <TextField
-                label={discountType === "FIXED_AMOUNT" ? "Amount off per month ($)" : "Percentage off"}
+                label={discountType === "FIXED_AMOUNT" ? `Amount off per ${rewardFrequency === "DAY" ? "day" : rewardFrequency === "WEEK" ? "week" : "month"} ($)` : "Percentage off"}
                 type="number"
                 value={discountValue}
                 onChange={setDiscountValue}
@@ -619,12 +662,12 @@ export default function NewCampaignWizard() {
             <BlockStack gap="300">
               <Text as="h3" variant="headingMd">Duration</Text>
               <RangeSlider
-                label={`${rewardMonths} month${rewardMonths !== 1 ? "s" : ""}`}
-                value={rewardMonths}
+                label={`${rewardCycles} ${rewardCycles !== 1 ? (rewardFrequency === "DAY" ? "days" : rewardFrequency === "WEEK" ? "weeks" : "months") : (rewardFrequency === "DAY" ? "day" : rewardFrequency === "WEEK" ? "week" : "month")}`}
+                value={rewardCycles}
                 min={1}
                 max={12}
                 step={1}
-                onChange={(value) => setRewardMonths(value as number)}
+                onChange={(value) => setRewardCycles(value as number)}
                 output
               />
               <Text as="p" tone="subdued">
@@ -704,7 +747,7 @@ export default function NewCampaignWizard() {
             )}
             <InlineStack align="space-between">
               <Text as="span" tone="subdued">Duration</Text>
-              <Text as="span" fontWeight="bold">{rewardMonths} month{rewardMonths !== 1 ? "s" : ""}</Text>
+              <Text as="span" fontWeight="bold">{rewardLabel}</Text>
             </InlineStack>
             <Divider />
             <InlineStack align="space-between">
@@ -719,9 +762,9 @@ export default function NewCampaignWizard() {
                 </InlineStack>
                 <Divider />
                 <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Max reward months</Text>
+                  <Text as="span" tone="subdued">Max reward cycles</Text>
                   <Text as="span" fontWeight="bold">
-                    {parseInt(maxSubmissions) * rewardMonths} months total
+                    {parseInt(maxSubmissions) * rewardCycles} cycles total
                   </Text>
                 </InlineStack>
               </>

@@ -3,6 +3,8 @@ import prisma from "../db.server";
 import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
 import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl } from "../utils/r2.server";
+import { verifyActiveSubscriber, getRechargeCustomer, getActiveSubscriptionsForProduct, applyRewardToNextCharge } from "../utils/recharge.server";
+import { checkRewardGating } from "../utils/reward-gating.server";
 
 /**
  * App Proxy catch-all route.
@@ -22,6 +24,9 @@ type ShopInfo = {
   brandName: string | null;
   logoUrl: string | null;
   accessToken: string;
+  subscriptionProvider: string;
+  providerApiKey: string | null;
+  providerConnected: boolean;
 };
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -37,13 +42,14 @@ function escapeHtml(str: string): string {
 function rewardText(campaign: {
   discountType: string;
   discountValue: number;
-  rewardMonths: number;
+  rewardCycles: number;
+  rewardFrequency: string;
 }): string {
   if (campaign.discountType === "FREE")
-    return `${campaign.rewardMonths} month${campaign.rewardMonths !== 1 ? "s" : ""} free`;
+    return `${campaign.rewardCycles} month${campaign.rewardCycles !== 1 ? "s" : ""} free`;
   if (campaign.discountType === "FIXED_AMOUNT")
-    return `$${campaign.discountValue} off × ${campaign.rewardMonths}mo`;
-  return `${campaign.discountValue}% off × ${campaign.rewardMonths}mo`;
+    return `$${campaign.discountValue} off × ${campaign.rewardCycles}mo`;
+  return `${campaign.discountValue}% off × ${campaign.rewardCycles}mo`;
 }
 
 /**
@@ -169,7 +175,7 @@ async function resolveRequest(request: Request) {
 
   const shop = await prisma.shop.findUnique({
     where: { shopDomain },
-    select: { id: true, shopDomain: true, brandName: true, logoUrl: true, accessToken: true },
+    select: { id: true, shopDomain: true, brandName: true, logoUrl: true, accessToken: true, subscriptionProvider: true, providerApiKey: true, providerConnected: true },
   });
 
   if (!shop) {
@@ -265,7 +271,7 @@ async function handleCampaignLibrary(shop: ShopInfo, brandName: string, loggedIn
       title: true,
       moment: true,
       contentType: true,
-      rewardMonths: true,
+      rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
       maxSubmissions: true,
@@ -339,13 +345,14 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
       moment: true,
       contentType: true,
       captureSpecs: true,
-      rewardMonths: true,
+      rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
       maxSubmissions: true,
       endDate: true,
       status: true,
       shopId: true,
+      productId: true,
       productTitle: true,
       productImageUrl: true,
       _count: { select: { submissions: true } },
@@ -363,6 +370,49 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
     `;
     const html = proxyLayout({ title: "Not Found", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
     return new Response(html, { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
+
+  // ── Product-specific subscription verification (Recharge) ──
+  if (shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+    try {
+      const rechargeCustomer = await getRechargeCustomer(
+        loggedInCustomerId,
+        shop.providerApiKey || undefined
+      );
+      if (!rechargeCustomer) {
+        const body = `
+          <div style="text-align: center; padding: 40px 0;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
+            <h1 style="font-size: 20px; margin-bottom: 8px;">Subscribers only</h1>
+            <p style="color: var(--ugme-muted); margin-bottom: 24px;">You need an active subscription to submit content and earn rewards.</p>
+            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
+          </div>
+        `;
+        const html = proxyLayout({ title: "Subscribers Only", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
+
+      const matchingSubs = await getActiveSubscriptionsForProduct(
+        rechargeCustomer.id,
+        campaign.productId,
+        shop.providerApiKey || undefined
+      );
+      if (matchingSubs.length === 0) {
+        const body = `
+          <div style="text-align: center; padding: 40px 0;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
+            <h1 style="font-size: 20px; margin-bottom: 8px;">No matching subscription</h1>
+            <p style="color: var(--ugme-muted); margin-bottom: 24px;">Rewards for this campaign are only available to subscribers of <strong>${escapeHtml(campaign.productTitle || "this product")}</strong>.</p>
+            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
+          </div>
+        `;
+        const html = proxyLayout({ title: "No Matching Subscription", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
+    } catch (err) {
+      console.error("[UGME] Recharge product subscription check failed:", err);
+      // Fail open
+    }
   }
 
   let specs: Array<{ label: string; description: string }> = [];
@@ -449,12 +499,13 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       moment: true,
       contentType: true,
       captureSpecs: true,
-      rewardMonths: true,
+      rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
       maxSubmissions: true,
       status: true,
       shopId: true,
+      productId: true,
       productTitle: true,
       _count: { select: { submissions: true } },
     },
@@ -470,7 +521,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   // Check if already submitted
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
   const existingSubmission = await prisma.submission.findFirst({
-    where: { campaignId, customerId: customer.id },
+    where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
   });
 
   if (existingSubmission) {
@@ -494,6 +545,78 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       `;
       const html = proxyLayout({ title: "Slots Full", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
       return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+  }
+
+  // ── Product-specific subscription verification (Recharge) ──
+  let matchingSubscriptionId: string | null = null;
+
+  if (shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+    try {
+      const rechargeCustomer = await getRechargeCustomer(
+        customer.shopifyCustomerId || loggedInCustomerId,
+        shop.providerApiKey || undefined
+      );
+      if (!rechargeCustomer) {
+        const body = `
+          <div style="text-align: center; padding: 40px 0;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
+            <h1 style="font-size: 20px; margin-bottom: 8px;">Subscribers only</h1>
+            <p style="color: var(--ugme-muted); margin-bottom: 24px;">You need an active subscription to submit content and earn rewards.</p>
+            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
+          </div>
+        `;
+        const html = proxyLayout({ title: "Subscribers Only", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
+
+      const matchingSubs = await getActiveSubscriptionsForProduct(
+        rechargeCustomer.id,
+        campaign.productId,
+        shop.providerApiKey || undefined
+      );
+
+      if (matchingSubs.length === 0) {
+        const body = `
+          <div style="text-align: center; padding: 40px 0;">
+            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
+            <h1 style="font-size: 20px; margin-bottom: 8px;">No matching subscription</h1>
+            <p style="color: var(--ugme-muted); margin-bottom: 24px;">Rewards for this campaign are only available to subscribers of <strong>${escapeHtml(campaign.productTitle || "this product")}</strong>.</p>
+            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
+          </div>
+        `;
+        const html = proxyLayout({ title: "No Matching Subscription", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
+
+      // Auto-select if only one, otherwise we'll show a picker
+      matchingSubscriptionId = String(matchingSubs[0].id);
+    } catch (err) {
+      console.error("[UGME] Recharge product subscription check failed:", err);
+      // Fail open
+    }
+  }
+
+  // ── Reward gating warning for single-discount providers (e.g. Recharge) ──
+  let rewardWarningHtml = "";
+  if (shop.providerConnected) {
+    try {
+      const gating = await checkRewardGating({
+        customerId: customer.id,
+        shopId: shop.id,
+        subscriptionProvider: shop.subscriptionProvider as any,
+      });
+      if (gating.hasActiveReward && gating.message) {
+        rewardWarningHtml = `
+          <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--ugme-radius); padding: 14px 16px; margin-bottom: 20px;">
+            <div style="font-weight: 600; font-size: 14px; color: #92400e; margin-bottom: 4px;">\u26a0\ufe0f Heads up \u2014 you have an active reward</div>
+            <div style="font-size: 13px; color: #78350f; line-height: 1.5;">${escapeHtml(gating.message)}</div>
+          </div>
+        `;
+      }
+    } catch (err) {
+      console.error("[UGME] Reward gating check failed:", err);
+      // Fail open — don't block submission if gating check fails
     }
   }
 
@@ -533,6 +656,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
     </p>
 
     ${errorBannerHtml}
+    ${rewardWarningHtml}
     <form id="submitForm" method="POST" action="/apps/ugme/campaign/${campaign.id}/submit?shop=${shop.shopDomain}" enctype="multipart/form-data">
 
       <!-- File upload area -->
@@ -727,7 +851,7 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
 async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, request: Request) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    select: { id: true, title: true, shopId: true, status: true, contentType: true },
+    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true },
   });
 
   if (!campaign || campaign.shopId !== shop.id || campaign.status !== "ACTIVE") {
@@ -739,9 +863,34 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
 
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
+  // ── Product-specific subscription verification (Recharge) ──
+  if (shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+    try {
+      const rechargeCustomer = await getRechargeCustomer(
+        loggedInCustomerId,
+        shop.providerApiKey || undefined
+      );
+      if (!rechargeCustomer) {
+        return errorRedirect(shop.shopDomain, campaignId, "no_subscription");
+      }
+
+      const matchingSubs = await getActiveSubscriptionsForProduct(
+        rechargeCustomer.id,
+        campaign.productId,
+        shop.providerApiKey || undefined
+      );
+      if (matchingSubs.length === 0) {
+        return errorRedirect(shop.shopDomain, campaignId, "no_subscription");
+      }
+    } catch (err) {
+      console.error("[UGME] Recharge product subscription check on submit failed:", err);
+      // Fail open
+    }
+  }
+
   // Check duplicate
   const existing = await prisma.submission.findFirst({
-    where: { campaignId, customerId: customer.id },
+    where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
   });
   if (existing) {
     return new Response(null, {
@@ -752,10 +901,12 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
 
   // Parse the multipart form data
   let description = "";
+  let subscriptionId = "";
   let file: File | null = null;
   try {
     const formData = await request.formData();
     description = (formData.get("message") as string) || "";
+    subscriptionId = (formData.get("subscriptionId") as string) || "";
     file = formData.get("file") as File | null;
   } catch (err) {
     console.error("[UGME] Form parse error:", err);
@@ -779,6 +930,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
       contentUrl: "r2://pending", // temporary, updated after upload
       fileBytes: file.size,
       description: description || null,
+      subscriptionId: subscriptionId || null,
       rightsAccepted: true,
     },
   });
@@ -823,7 +975,7 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
     select: {
       id: true,
       title: true,
-      rewardMonths: true,
+      rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
       contentType: true,
@@ -910,7 +1062,7 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
         select: {
           id: true,
           title: true,
-          rewardMonths: true,
+          rewardCycles: true, rewardFrequency: true,
           discountType: true,
           discountValue: true,
           productImageUrl: true,
@@ -919,7 +1071,7 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
       reward: {
         select: {
           status: true,
-          months: true,
+          cycles: true,
           appliedAt: true,
         },
       },
@@ -1039,7 +1191,7 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
           id: true,
           title: true,
           moment: true,
-          rewardMonths: true,
+          rewardCycles: true, rewardFrequency: true,
           discountType: true,
           discountValue: true,
           productTitle: true,
@@ -1049,7 +1201,7 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
       reward: {
         select: {
           status: true,
-          months: true,
+          cycles: true,
           appliedAt: true,
         },
       },

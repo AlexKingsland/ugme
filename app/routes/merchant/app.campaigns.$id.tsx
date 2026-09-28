@@ -43,7 +43,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       submissions: {
         include: {
           customer: { select: { email: true } },
-          reward: { select: { status: true, months: true } },
+          reward: { select: { status: true, cycles: true } },
         },
         orderBy: { createdAt: "desc" },
       },
@@ -69,11 +69,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     daysRemaining = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
   }
 
-  // Budget estimate (approved × rewardMonths × estimated cost-per-month)
+  // Budget estimate (approved × rewardCycles × estimated cost-per-month)
   const estimatedCostPerMonth = 30; // placeholder
-  const budgetSpent = approved * campaign.rewardMonths * estimatedCostPerMonth;
+  const budgetSpent = approved * campaign.rewardCycles * estimatedCostPerMonth;
   const budgetCap = campaign.maxSubmissions
-    ? campaign.maxSubmissions * campaign.rewardMonths * estimatedCostPerMonth
+    ? campaign.maxSubmissions * campaign.rewardCycles * estimatedCostPerMonth
     : null;
 
   let captureSpecs: Array<{ label: string; description: string }> = [];
@@ -93,7 +93,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       contentType: campaign.contentType || "VIDEO",
       moment: campaign.moment,
       context: campaign.context,
-      rewardMonths: campaign.rewardMonths,
+      rewardCycles: campaign.rewardCycles,
       maxSubmissions: campaign.maxSubmissions,
       captureSpecs,
       startDate: campaign.startDate
@@ -123,7 +123,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       contentUrl: s.contentUrl,
       thumbnailUrl: s.thumbnailUrl,
       rewardStatus: s.reward?.status ?? null,
-      rewardMonths: s.reward?.months ?? null,
+      rewardCycles: s.reward?.cycles ?? null,
       createdAt: new Date(s.createdAt).toLocaleDateString(),
     })),
     submitUrl,
@@ -289,7 +289,7 @@ export default function CampaignDashboard() {
             tone="warning"
             action={{
               content: `Review ${stats.pending} submission${stats.pending !== 1 ? "s" : ""}`,
-              onAction: () => navigate("/app/submissions"),
+              onAction: () => navigate(`/app/library?tab=pending&campaign=${campaign.id}`),
             }}
           >
             You have {stats.pending} submission
@@ -403,8 +403,7 @@ export default function CampaignDashboard() {
                         Reward
                       </Text>
                       <Text as="span" fontWeight="semibold">
-                        {campaign.rewardMonths} free month
-                        {campaign.rewardMonths !== 1 ? "s" : ""}
+                        {campaign.rewardCycles} free {campaign.rewardFrequency === "DAY" ? (campaign.rewardCycles !== 1 ? "days" : "day") : campaign.rewardFrequency === "WEEK" ? (campaign.rewardCycles !== 1 ? "weeks" : "week") : (campaign.rewardCycles !== 1 ? "months" : "month")}
                       </Text>
                     </InlineStack>
                     <InlineStack align="space-between">

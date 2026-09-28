@@ -46,7 +46,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       title: campaign.title,
       moment: campaign.moment,
       contentType: campaign.contentType,
-      rewardMonths: campaign.rewardMonths,
+      rewardCycles: campaign.rewardCycles,
       maxSubmissions: campaign.maxSubmissions,
       startDate: campaign.startDate
         ? new Date(campaign.startDate).toISOString().split("T")[0]
@@ -68,7 +68,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const title = formData.get("title") as string;
   const moment = formData.get("moment") as string;
   const contentType = formData.get("contentType") as string;
-  const rewardMonths = parseInt(formData.get("rewardMonths") as string, 10) || 1;
+  const rewardCycles = parseInt(formData.get("rewardCycles") as string, 10) || 1;
   const maxSubmissions = formData.get("maxSubmissions")
     ? parseInt(formData.get("maxSubmissions") as string, 10)
     : null;
@@ -84,7 +84,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const errors: string[] = [];
   if (!title || title.trim().length === 0) errors.push("Title is required.");
   if (!moment || moment.trim().length === 0) errors.push("Creative moment is required.");
-  if (rewardMonths < 1 || rewardMonths > 12) errors.push("Reward months must be between 1 and 12.");
+  if (rewardCycles < 1 || rewardCycles > 12) errors.push("Reward months must be between 1 and 12.");
   if (startDate && endDate && endDate <= startDate) errors.push("End date must be after start date.");
 
   if (errors.length > 0) {
@@ -107,7 +107,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       title: title.trim(),
       moment: moment.trim(),
       contentType: contentType === "VIDEO" ? "VIDEO" : "PHOTO",
-      rewardMonths,
+      rewardCycles,
       maxSubmissions,
       startDate,
       endDate,
@@ -129,7 +129,7 @@ export default function EditCampaignPage() {
   const [title, setTitle] = useState(campaign.title);
   const [moment, setMoment] = useState(campaign.moment);
   const [contentType, setContentType] = useState(campaign.contentType);
-  const [rewardMonths, setRewardMonths] = useState(campaign.rewardMonths);
+  const [rewardCycles, setRewardMonths] = useState(campaign.rewardCycles);
   const [maxSubmissions, setMaxSubmissions] = useState(
     campaign.maxSubmissions?.toString() ?? "",
   );
@@ -166,7 +166,7 @@ export default function EditCampaignPage() {
     formData.set("title", title);
     formData.set("moment", moment);
     formData.set("contentType", contentType);
-    formData.set("rewardMonths", String(rewardMonths));
+    formData.set("rewardCycles", String(rewardCycles));
     if (hasMaxSubmissions && maxSubmissions) {
       formData.set("maxSubmissions", maxSubmissions);
     }
@@ -178,7 +178,7 @@ export default function EditCampaignPage() {
       formData.set("captureSpecs", JSON.stringify(specs));
     }
     submit(formData, { method: "post" });
-  }, [title, moment, contentType, rewardMonths, maxSubmissions, startDate, endDate, hasDateRange, hasMaxSubmissions, specs, submit]);
+  }, [title, moment, contentType, rewardCycles, maxSubmissions, startDate, endDate, hasDateRange, hasMaxSubmissions, specs, submit]);
 
   return (
     <Page
@@ -286,8 +286,8 @@ export default function EditCampaignPage() {
               <BlockStack gap="400">
                 <Text as="h2" variant="headingMd">Reward</Text>
                 <RangeSlider
-                  label={`${rewardMonths} month${rewardMonths !== 1 ? "s" : ""} free`}
-                  value={rewardMonths}
+                  label={`${rewardCycles} month${rewardCycles !== 1 ? "s" : ""} free`}
+                  value={rewardCycles}
                   min={1}
                   max={6}
                   step={1}

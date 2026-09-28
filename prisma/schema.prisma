@@ -66,6 +66,12 @@ enum DiscountType {
   PERCENTAGE
 }
 
+enum BillingFrequency {
+  DAY
+  WEEK
+  MONTH
+}
+
 enum StorageTier {
   TIER_10GB
   TIER_100GB
@@ -94,7 +100,7 @@ model Shop {
   providerApiKey       String?              // encrypted API key for ReCharge etc
   providerConnected    Boolean              @default(false)
   providerConfig       String               @default("{}") // JSON stored as string for SQLite
-  defaultRewardMonths  Int                  @default(1)
+  defaultRewardCycles  Int                  @default(1)
   storageTier          StorageTier          @default(TIER_10GB)
   brandName            String?
   logoUrl              String?
@@ -103,6 +109,7 @@ model Shop {
 
   campaigns            Campaign[]
   customers            Customer[]
+  rechargeCustomers    RechargeCustomer[]
 }
 
 model Campaign {
@@ -116,7 +123,8 @@ model Campaign {
   productImageUrl  String?        // Product image URL for hero display
   contentType      ContentType      @default(VIDEO)
   captureSpecs     String         @default("[]") // JSON array of spec objects
-  rewardMonths     Int            @default(1)
+  rewardCycles     Int            @default(1)
+  rewardFrequency  BillingFrequency @default(MONTH)
   discountType     DiscountType   @default(FREE)
   discountValue    Float          @default(0)
   startDate        DateTime?
@@ -165,6 +173,7 @@ model Submission {
   fileBytes     Int            @default(0)
   durationSecs  Int?
   description   String?
+  subscriptionId String?          // Recharge (or other provider) subscription ID tied to this submission
   markedUsed    Boolean        @default(false)
   usageTags     String         @default("[]")
   rightsAccepted Boolean       @default(false)
@@ -187,9 +196,12 @@ model Reward {
   id                 String               @id @default(cuid())
   submissionId       String               @unique
   customerId         String
-  months             Int
+  cycles             Int              @default(1)
   discountProvider   SubscriptionProvider
   externalDiscountId String?
+  rechargeChargeId   String?
+  rechargeSubscriptionId String?
+  discountCode       String?
   appliedAt          DateTime?
   status             RewardStatus         @default(CREATED)
   createdAt          DateTime             @default(now())
@@ -199,6 +211,24 @@ model Reward {
   customer           Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
+}
+
+model RechargeCustomer {
+  id                    String   @id @default(cuid())
+  shopId                String
+  shopifyCustomerId     String
+  rechargeCustomerId    String
+  rechargeSubscriptionId String?
+  subscriptionStatus    SubscriptionStatus @default(ACTIVE)
+  nextChargeDate        DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  shop                  Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, shopifyCustomerId])
+  @@index([shopId])
+  @@index([rechargeCustomerId])
 }
 
 model EmailLog {

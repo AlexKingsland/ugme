@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useFetcher } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useFetcher, useActionData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -40,7 +40,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         subscriptionProvider: "SHOPIFY_NATIVE",
         providerConnected: false,
         providerApiKey: "",
-        defaultRewardMonths: 1,
+        defaultRewardCycles: 1,
       },
       isNew: true,
     });
@@ -57,7 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       providerApiKey: shop.providerApiKey
         ? "••••••••" + shop.providerApiKey.slice(-4)
         : "",
-      defaultRewardMonths: shop.defaultRewardMonths,
+      defaultRewardCycles: shop.defaultRewardCycles,
     },
     isNew: false,
   });
@@ -90,20 +90,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (intent === "save-rewards") {
-    const defaultRewardMonths = parseInt(
-      formData.get("defaultRewardMonths") as string,
+    const defaultRewardCycles = parseInt(
+      formData.get("defaultRewardCycles") as string,
       10,
     );
 
     await prisma.shop.upsert({
       where: { shopDomain: session.shop },
       update: {
-        defaultRewardMonths: isNaN(defaultRewardMonths) ? 1 : defaultRewardMonths,
+        defaultRewardCycles: isNaN(defaultRewardCycles) ? 1 : defaultRewardCycles,
       },
       create: {
         shopDomain: session.shop,
         accessToken: session.accessToken || "",
-        defaultRewardMonths: isNaN(defaultRewardMonths) ? 1 : defaultRewardMonths,
+        defaultRewardCycles: isNaN(defaultRewardCycles) ? 1 : defaultRewardCycles,
       },
     });
 
@@ -113,6 +113,67 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "connect-provider") {
     const subscriptionProvider = formData.get("subscriptionProvider") as string;
     const providerApiKey = formData.get("providerApiKey") as string;
+
+    // Validate the API key before saving
+    if (subscriptionProvider === "RECHARGE") {
+      if (!providerApiKey || providerApiKey.trim() === "") {
+        return json({ success: false, intent: "connect-provider", error: "Please enter your ReCharge API token." });
+      }
+
+      // Validate the token can authenticate and create discounts (write access)
+      const token = providerApiKey.trim();
+      const rechargeHeaders = {
+        "X-Recharge-Access-Token": token,
+        "X-Recharge-Version": "2021-11",
+        "Content-Type": "application/json",
+      };
+
+      try {
+        // 1. Check auth + read access
+        const readRes = await fetch("https://api.rechargeapps.com/discounts?limit=1", {
+          headers: rechargeHeaders,
+        });
+
+        if (readRes.status === 401 || readRes.status === 403) {
+          return json({ success: false, intent: "connect-provider", error: "Invalid ReCharge API token. Please check your token and try again." });
+        }
+
+        if (!readRes.ok) {
+          return json({ success: false, intent: "connect-provider", error: `ReCharge API returned status ${readRes.status}. Please try again.` });
+        }
+
+        // 2. Check write access — create a disabled test discount then delete it
+        const testCode = `UGME_ACTIVATION_TEST_${Date.now()}`;
+        const createRes = await fetch("https://api.rechargeapps.com/discounts", {
+          method: "POST",
+          headers: rechargeHeaders,
+          body: JSON.stringify({
+            channel: "checkout_page",
+            code: testCode,
+            discount_type: "percentage",
+            value_type: "percentage",
+            value: "0.01",
+            status: "disabled",
+          }),
+        });
+
+        if (!createRes.ok) {
+          return json({ success: false, intent: "connect-provider", error: "Your token can read discounts but cannot create them. Make sure it has read & write access to Discounts." });
+        }
+
+        // Clean up immediately
+        const createData: any = await createRes.json();
+        const testDiscountId = createData.discount?.id;
+        if (testDiscountId) {
+          await fetch(`https://api.rechargeapps.com/discounts/${testDiscountId}`, {
+            method: "DELETE",
+            headers: rechargeHeaders,
+          });
+        }
+      } catch (err) {
+        return json({ success: false, intent: "connect-provider", error: `Could not reach ReCharge API: ${err instanceof Error ? err.message : "Unknown error"}` });
+      }
+    }
 
     await prisma.shop.upsert({
       where: { shopDomain: session.shop },
@@ -156,6 +217,7 @@ export default function SettingsPage() {
   const { shop, isNew } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
+  const actionData = useActionData<{ success: boolean; intent?: string; error?: string }>();
   const testFetcher = useFetcher<{ success: boolean; message?: string; error?: string }>();
 
   const isSaving = navigation.state === "submitting";
@@ -174,8 +236,8 @@ export default function SettingsPage() {
   const [connectionTested, setConnectionTested] = useState(false);
 
   // Rewards
-  const [defaultRewardMonths, setDefaultRewardMonths] = useState(
-    String(shop.defaultRewardMonths),
+  const [defaultRewardCycles, setDefaultRewardMonths] = useState(
+    String(shop.defaultRewardCycles),
   );
 
   const handleSaveBrand = useCallback(() => {
@@ -189,9 +251,9 @@ export default function SettingsPage() {
   const handleSaveRewards = useCallback(() => {
     const formData = new FormData();
     formData.set("intent", "save-rewards");
-    formData.set("defaultRewardMonths", defaultRewardMonths);
+    formData.set("defaultRewardCycles", defaultRewardCycles);
     submit(formData, { method: "post" });
-  }, [defaultRewardMonths, submit]);
+  }, [defaultRewardCycles, submit]);
 
   const handleTestConnection = useCallback(() => {
     const formData = new FormData();
@@ -260,7 +322,7 @@ export default function SettingsPage() {
         <Layout.AnnotatedSection
           id="provider"
           title="Subscription provider"
-          description="Connect the subscription platform that manages your customers' recurring orders. UGME uses this connection to apply free-month discounts when you approve submissions."
+          description="Connect the subscription platform that manages your customers' recurring orders. UGME uses this connection to apply subscription discounts when you approve submissions."
         >
           {shop.providerConnected ? (
             /* Connected state */
@@ -342,7 +404,7 @@ export default function SettingsPage() {
                       <Text as="span" fontWeight="medium">
                         recurringCycleLimit
                       </Text>{" "}
-                      matching the campaign's reward months.
+                      matching the campaign's reward cycles.
                     </Text>
                     <Text as="p" tone="subdued">
                       No additional API keys required — UGME uses the access
@@ -431,6 +493,12 @@ export default function SettingsPage() {
                       </Banner>
                     )}
 
+                    {actionData && !actionData.success && actionData.intent === "connect-provider" && (
+                      <Banner tone="critical">
+                        <p>{actionData.error}</p>
+                      </Banner>
+                    )}
+
                     <InlineStack gap="300">
                       <Button
                         onClick={handleTestConnection}
@@ -498,13 +566,13 @@ export default function SettingsPage() {
           <Card>
             <FormLayout>
               <TextField
-                label="Default reward months"
+                label="Default reward cycles"
                 type="number"
-                value={defaultRewardMonths}
+                value={defaultRewardCycles}
                 onChange={setDefaultRewardMonths}
                 min={1}
                 max={12}
-                helpText="Number of free subscription months given for approved submissions"
+                helpText="Number of free subscription cycles given for approved submissions"
                 autoComplete="off"
               />
               <InlineStack align="end">

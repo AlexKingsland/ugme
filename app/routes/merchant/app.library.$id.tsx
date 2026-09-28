@@ -20,6 +20,7 @@ import {
 import { useState, useCallback } from "react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
+import { approveSubmission } from "../../utils/approval.server";
 
 function timeAgo(date: string | Date): string {
   const d = typeof date === "string" ? new Date(date) : date;
@@ -37,11 +38,20 @@ function formatDuration(secs: number | null): string {
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `0:${String(s).padStart(2, "0")}`;
 }
 
-function formatReward(discountType: string, discountValue: number, months: number): string {
-  if (discountType === "FREE") return `${months} month${months !== 1 ? "s" : ""} free`;
-  if (discountType === "FIXED_AMOUNT") return `$${discountValue}/mo off for ${months} month${months !== 1 ? "s" : ""}`;
-  if (discountType === "PERCENTAGE") return `${discountValue}% off for ${months} month${months !== 1 ? "s" : ""}`;
-  return `${months} months`;
+function frequencyUnit(freq: string, count: number): string {
+  const units: Record<string, [string, string]> = {
+    DAY: ["day", "days"], WEEK: ["week", "weeks"], MONTH: ["month", "months"],
+  };
+  const [singular, plural] = units[freq] || units.MONTH;
+  return count === 1 ? singular : plural;
+}
+
+function formatReward(discountType: string, discountValue: number, cycles: number, frequency: string = "MONTH"): string {
+  const unit = `${cycles} ${frequencyUnit(frequency, cycles)}`;
+  if (discountType === "FREE") return `${unit} free`;
+  if (discountType === "FIXED_AMOUNT") return `$${discountValue} off × ${unit}`;
+  if (discountType === "PERCENTAGE") return `${discountValue}% off × ${unit}`;
+  return unit;
 }
 
 
@@ -67,8 +77,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     where: { id: params.id },
     include: {
       customer: { select: { email: true } },
-      campaign: { select: { id: true, title: true, moment: true, rewardMonths: true, discountType: true, discountValue: true, shopId: true } },
-      reward: { select: { status: true, months: true } },
+      campaign: { select: { id: true, title: true, moment: true, productId: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, shopId: true } },
+      reward: { select: { status: true, cycles: true } },
     },
   });
 
@@ -106,7 +116,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       reviewedAt: submission.reviewedAt,
       reviewNote: submission.reviewNote,
       rejectionReason: submission.rejectionReason,
-      rewardMonths: submission.campaign.rewardMonths,
+      rewardCycles: submission.campaign.rewardCycles,
+      rewardFrequency: submission.campaign.rewardFrequency,
       discountType: submission.campaign.discountType,
       discountValue: submission.campaign.discountValue,
       rewardStatus: submission.reward?.status || null,
@@ -120,7 +131,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const actionType = formData.get("_action") as string;
 
-  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
+  const shop = await prisma.shop.findUnique({
+    where: { shopDomain: session.shop },
+    select: {
+      id: true,
+      subscriptionProvider: true,
+      providerApiKey: true,
+      providerConnected: true,
+    },
+  });
   if (!shop) return json({ error: "Shop not found" }, { status: 400 });
 
   const submission = await prisma.submission.findUnique({
@@ -132,28 +151,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   if (actionType === "approve") {
-    await prisma.submission.update({
-      where: { id: params.id },
-      data: {
-        status: "APPROVED",
-        reviewedAt: new Date(),
-        rightsAccepted: true,
-        usageTags: JSON.stringify(["Social + Product Pages"]),
-      },
-    });
-    await prisma.reward.upsert({
-      where: { submissionId: params.id! },
-      update: { status: "APPLIED", appliedAt: new Date() },
-      create: {
-        submissionId: params.id!,
-        customerId: submission.customerId,
-        months: submission.campaign.rewardMonths,
-        discountProvider: "SHOPIFY_NATIVE",
-        status: "APPLIED",
-        appliedAt: new Date(),
-      },
-    });
-    return json({ success: true, action: "approved" });
+    try {
+      const result = await approveSubmission({ submissionId: params.id!, shop });
+      return json({ success: true, action: "approved", ...result });
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : "Approval failed" }, { status: 400 });
+    }
   }
 
   if (actionType === "deny") {
@@ -222,7 +225,7 @@ export default function SubmissionDetail() {
   }, [submit, selectedReason, denyNote]);
 
   const isPending = submission.status === "PENDING";
-  const rewardText = formatReward(submission.discountType, submission.discountValue, submission.rewardMonths);
+  const rewardText = formatReward(submission.discountType, submission.discountValue, submission.rewardCycles, submission.rewardFrequency);
 
   return (
     <Page

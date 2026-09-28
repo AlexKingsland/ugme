@@ -166,8 +166,7 @@ export default function CampaignLive() {
                           Love our products? We'd love to see how you use them!
                           Share a quick video or photo and earn{" "}
                           <Text as="span" fontWeight="semibold">
-                            {campaign.rewardMonths} free month
-                            {campaign.rewardMonths > 1 ? "s" : ""}
+                            {campaign.rewardCycles} free {campaign.rewardFrequency === "DAY" ? (campaign.rewardCycles > 1 ? "days" : "day") : campaign.rewardFrequency === "WEEK" ? (campaign.rewardCycles > 1 ? "weeks" : "week") : (campaign.rewardCycles > 1 ? "months" : "month")}
                           </Text>{" "}
                           on your subscription.
                         </Text>
@@ -254,8 +253,8 @@ export default function CampaignLive() {
                       Reward
                     </Text>
                     <Text as="span" fontWeight="semibold">
-                      {campaign.rewardMonths} free month
-                      {campaign.rewardMonths > 1 ? "s" : ""}
+                      {campaign.rewardCycles} free month
+                      {campaign.rewardCycles > 1 ? "s" : ""}
                     </Text>
                   </InlineStack>
                   {campaign.maxSubmissions && (

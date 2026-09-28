@@ -3,7 +3,7 @@ import { flatRoutes } from "@remix-run/fs-routes";
 
 export default [
   // Infrastructure routes (auth, webhooks, root redirect)
-  ...(await flatRoutes({ ignoredRouteFiles: ["merchant/**", "customer/**"] })),
+  ...(await flatRoutes({ ignoredRouteFiles: ["merchant/**"] })),
 
   // ── Merchant routes (Shopify embedded admin, Polaris UI) ──────────
   ...prefix("app", [
@@ -21,12 +21,7 @@ export default [
     ]),
   ]),
 
-  // ── Customer routes (public submission portal) ────────────────────
-  ...prefix("submit", [
-    layout("routes/customer/submit.tsx", [
-      index("routes/customer/submit._index.tsx"),
-      route(":campaignId", "routes/customer/submit.$campaignId.tsx"),
-      route("confirmation", "routes/customer/submit.confirmation.tsx"),
-    ]),
-  ]),
+  // Customer-facing submission flow is served via the Shopify App Proxy
+  // at /apps/ugme/* — handled by routes/api.proxy.$.tsx (auto-discovered
+  // by flatRoutes above). No separate customer routes needed.
 ] satisfies RouteConfig;
