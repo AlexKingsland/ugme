@@ -4,6 +4,7 @@ import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
 import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl } from "../utils/r2.server";
 import { verifyActiveSubscriber, getRechargeCustomer, getActiveSubscriptionsForProduct, applyRewardToNextCharge } from "../utils/recharge.server";
+import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { checkRewardGating } from "../utils/reward-gating.server";
 
 /**
@@ -27,6 +28,7 @@ type ShopInfo = {
   subscriptionProvider: string;
   providerApiKey: string | null;
   providerConnected: boolean;
+  planTier: string;
 };
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -175,7 +177,7 @@ async function resolveRequest(request: Request) {
 
   const shop = await prisma.shop.findUnique({
     where: { shopDomain },
-    select: { id: true, shopDomain: true, brandName: true, logoUrl: true, accessToken: true, subscriptionProvider: true, providerApiKey: true, providerConnected: true },
+    select: { id: true, shopDomain: true, brandName: true, logoUrl: true, accessToken: true, subscriptionProvider: true, providerApiKey: true, providerConnected: true, planTier: true },
   });
 
   if (!shop) {
@@ -640,6 +642,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       no_file: "Please select a file to upload.",
       too_large: "File is too large. Maximum size is 100 MB.",
       upload_failed: "Upload failed. Please try again.",
+      plan_limit: "Submission limit reached. The store\u2019s current plan cannot accept more submissions right now.",
     };
     const msg = errorMsgs[errorParam] || "Something went wrong. Please try again.";
     errorBannerHtml = '<div style="background: #fef2f2; color: #991b1b; padding: 14px 16px; border-radius: var(--ugme-radius); margin-bottom: 20px; font-size: 14px;">' + msg + '</div>';
@@ -915,6 +918,17 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
 
   if (!file || file.size === 0) {
     return errorRedirect(shop.shopDomain, campaignId, "no_file");
+  }
+
+  // ── Plan gating: check storage + monthly submission limits ──
+  try {
+    const gates = await checkPlanGates(shop.id, (shop.planTier as PlanTierKey) || "FREE", file.size);
+    if (!gates.canAcceptSubmission) {
+      return errorRedirect(shop.shopDomain, campaignId, "plan_limit");
+    }
+  } catch (err) {
+    console.error("[UGME] Plan gate check failed:", err);
+    // Fail open — don't block submissions if the check errors
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {

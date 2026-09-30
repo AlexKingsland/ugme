@@ -24,19 +24,13 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 
-const TIER_LIMITS: Record<string, { bytes: number; label: string }> = {
-  TIER_10GB:  { bytes: 10 * 1024 * 1024 * 1024,   label: "10 GB" },
-  TIER_100GB: { bytes: 100 * 1024 * 1024 * 1024,  label: "100 GB" },
-  TIER_1TB:   { bytes: 1024 * 1024 * 1024 * 1024,  label: "1 TB" },
-};
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+import {
+  getPlan,
+  checkStorageLimit,
+  checkSubmissionLimit,
+  type PlanTierKey,
+} from "../../utils/plans.server";
+import { formatBytes } from "../../utils/format";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -52,7 +46,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       activeCampaigns: [],
       shopExists: false,
       providerConnected: false,
-      storage: { usedBytes: 0, tier: "TIER_10GB" },
+      storage: { usedBytes: 0, plan: getPlan("FREE") },
+      submissions: { monthlyCount: 0, plan: getPlan("FREE") },
     });
   }
 
@@ -109,6 +104,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     take: 3,
   });
 
+  // Monthly submission count for the current billing period
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthlySubmissions = await prisma.submission.count({
+    where: {
+      campaign: { shopId: shop.id },
+      createdAt: { gte: monthStart },
+    },
+  });
+
+  const plan = getPlan((shop.planTier as PlanTierKey) || "FREE");
+
   return json({
     stats: { activeCampaigns, totalSubmissions, pendingReview, rewardsApplied },
     recentSubmissions,
@@ -117,7 +124,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     providerConnected: shop.providerConnected,
     storage: {
       usedBytes: storageAgg._sum.fileBytes || 0,
-      tier: shop.storageTier,
+      plan,
+    },
+    submissions: {
+      monthlyCount: monthlySubmissions,
+      plan,
     },
   });
 };
@@ -134,9 +145,8 @@ function StatCard({ title, value, helpText }: { title: string; value: number; he
   );
 }
 
-function StorageCard({ usedBytes, tier }: { usedBytes: number; tier: string }) {
-  const tierInfo = TIER_LIMITS[tier] || TIER_LIMITS.TIER_10GB;
-  const pct = Math.min((usedBytes / tierInfo.bytes) * 100, 100);
+function StorageCard({ usedBytes, plan }: { usedBytes: number; plan: { storageBytes: number; storageLabel: string; name: string } }) {
+  const pct = plan.storageBytes === Infinity ? 0 : Math.min((usedBytes / plan.storageBytes) * 100, 100);
   const isHigh = pct >= 80;
   const isCritical = pct >= 95;
 
@@ -145,7 +155,7 @@ function StorageCard({ usedBytes, tier }: { usedBytes: number; tier: string }) {
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
           <Text as="h2" variant="headingMd">Storage</Text>
-          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${tierInfo.label} plan`}</Badge>
+          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${plan.name} plan`}</Badge>
         </InlineStack>
 
         <ProgressBar
@@ -159,7 +169,7 @@ function StorageCard({ usedBytes, tier }: { usedBytes: number; tier: string }) {
             {formatBytes(usedBytes)} used
           </Text>
           <Text as="p" variant="bodySm" tone="subdued">
-            {formatBytes(tierInfo.bytes - usedBytes)} remaining
+            {plan.storageLabel} limit
           </Text>
         </InlineStack>
 
@@ -168,6 +178,46 @@ function StorageCard({ usedBytes, tier }: { usedBytes: number; tier: string }) {
             {isCritical
               ? "You're almost out of storage. Upgrade your plan to keep accepting submissions."
               : "Storage is getting full. Consider upgrading to avoid disruptions."}
+          </Banner>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
+function SubmissionsCard({ monthlyCount, plan }: { monthlyCount: number; plan: { submissionsPerMonth: number; submissionLabel: string; name: string } }) {
+  const pct = plan.submissionsPerMonth === Infinity ? 0 : Math.min((monthlyCount / plan.submissionsPerMonth) * 100, 100);
+  const isHigh = pct >= 80;
+  const isCritical = pct >= 95;
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingMd">Monthly Submissions</Text>
+          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${plan.name} plan`}</Badge>
+        </InlineStack>
+
+        <ProgressBar
+          progress={pct}
+          tone={isCritical ? "critical" : isHigh ? "highlight" : "primary"}
+          size="small"
+        />
+
+        <InlineStack align="space-between">
+          <Text as="p" variant="bodySm" tone="subdued">
+            {monthlyCount} used this month
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {plan.submissionLabel} limit
+          </Text>
+        </InlineStack>
+
+        {isHigh && (
+          <Banner tone={isCritical ? "critical" : "warning"}>
+            {isCritical
+              ? "You\u2019re almost at your monthly submission limit. Upgrade to keep accepting submissions."
+              : "Submission usage is getting high. Consider upgrading to avoid disruptions."}
           </Banner>
         )}
       </BlockStack>
@@ -186,7 +236,7 @@ function statusBadge(status: string) {
 }
 
 export default function Dashboard() {
-  const { stats, recentSubmissions, activeCampaigns, shopExists, providerConnected, storage } =
+  const { stats, recentSubmissions, activeCampaigns, shopExists, providerConnected, storage, submissions } =
     useLoaderData<typeof loader>();
 
   return (
@@ -213,8 +263,11 @@ export default function Dashboard() {
           <StatCard title="Rewards Applied" value={stats.rewardsApplied} />
         </InlineGrid>
 
-        {/* Storage bar */}
-        <StorageCard usedBytes={storage.usedBytes} tier={storage.tier} />
+        {/* Storage & submissions bars */}
+        <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+          <StorageCard usedBytes={storage.usedBytes} plan={storage.plan} />
+          {submissions && <SubmissionsCard monthlyCount={submissions.monthlyCount} plan={submissions.plan} />}
+        </InlineGrid>
 
         <Layout>
           {/* Recent Submissions */}

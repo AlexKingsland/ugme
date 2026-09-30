@@ -30,18 +30,8 @@ import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { extractKeyFromContentUrl, getPresignedDownloadUrl, deleteObject } from "../../utils/r2.server";
 
-const TIER_LIMITS: Record<string, { bytes: number; label: string }> = {
-  TIER_10GB:  { bytes: 10 * 1024 * 1024 * 1024,   label: "10 GB" },
-  TIER_100GB: { bytes: 100 * 1024 * 1024 * 1024,  label: "100 GB" },
-  TIER_1TB:   { bytes: 1024 * 1024 * 1024 * 1024,  label: "1 TB" },
-};
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+import { getPlan, type PlanTierKey } from "../../utils/plans.server";
+import { formatBytes } from "../../utils/format";
 
 function timeAgo(date: string | Date): string {
   const d = typeof date === "string" ? new Date(date) : date;
@@ -85,7 +75,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!shop) {
     return json({
       items: [], campaigns: [], products: [], counts: { pending: 0, approved: 0 },
-      storage: { usedBytes: 0, tier: "TIER_10GB" },
+      storage: { usedBytes: 0, plan: getPlan("FREE") },
       tab, campaignFilter, mediaFilter, sort, productFilter, usedFilter,
     });
   }
@@ -202,7 +192,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     products,
     storage: {
       usedBytes: storageAgg._sum.fileBytes || 0,
-      tier: shop.storageTier,
+      plan: getPlan((shop.planTier as PlanTierKey) || "FREE"),
     },
     tab,
     campaignFilter,
@@ -297,8 +287,8 @@ export default function Library() {
   const [currentUsed, setCurrentUsed] = useState(usedFilter);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
-  const tierInfo = TIER_LIMITS[storage.tier] || TIER_LIMITS.TIER_10GB;
-  const storagePct = Math.min((storage.usedBytes / tierInfo.bytes) * 100, 100);
+  const planInfo = storage.plan;
+  const storagePct = planInfo.storageBytes === Infinity ? 0 : Math.min((storage.usedBytes / planInfo.storageBytes) * 100, 100);
 
   const navigate = useCallback((overrides: Record<string, string>) => {
     const params = new URLSearchParams();
@@ -396,7 +386,7 @@ export default function Library() {
               </InlineStack>
               <InlineStack gap="300" blockAlign="center">
                 <Badge tone={storagePct >= 90 ? "critical" : storagePct >= 70 ? "attention" : "info"}>
-                  {`${tierInfo.label} plan`}
+                  {`${planInfo.name} plan`}
                 </Badge>
                 <Text as="span" variant="bodySm" tone="subdued">
                   {formatBytes(storage.usedBytes)} used

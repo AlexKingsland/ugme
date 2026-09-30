@@ -78,6 +78,13 @@ enum StorageTier {
   TIER_1TB
 }
 
+enum PlanTier {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
 enum RewardStatus {
   CREATED
   APPLIED
@@ -102,6 +109,9 @@ model Shop {
   providerConfig       String               @default("{}") // JSON stored as string for SQLite
   defaultRewardCycles  Int                  @default(1)
   storageTier          StorageTier          @default(TIER_10GB)
+  planTier             PlanTier             @default(FREE)
+  shopifySubscriptionId String?             // Shopify recurring charge ID
+  planActivatedAt      DateTime?
   brandName            String?
   logoUrl              String?
   createdAt            DateTime             @default(now())

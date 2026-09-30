@@ -17,6 +17,7 @@ export default [
       route("library/:id", "routes/merchant/app.library.$id.tsx"),
       route("library", "routes/merchant/app.library.tsx"),
       route("settings", "routes/merchant/app.settings.tsx"),
+      route("settings/billing", "routes/merchant/app.settings.billing.tsx"),
       route("api/test-connection", "routes/merchant/app.api.test-connection.tsx"),
     ]),
   ]),

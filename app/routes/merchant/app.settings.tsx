@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useFetcher, useActionData } from "@remix-run/react";
+import { Link, useLoaderData, useSubmit, useNavigation, useFetcher, useActionData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -317,6 +317,30 @@ export default function SettingsPage() {
             </Banner>
           </Layout.Section>
         )}
+
+        {/* Plan & billing */}
+        <Layout.AnnotatedSection
+          id="billing"
+          title="Plan & billing"
+          description="Manage your UGME subscription plan and view current usage."
+        >
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">Current plan</Text>
+                <Badge>Free</Badge>
+              </InlineStack>
+              <Text as="p" tone="subdued">
+                Upgrade your plan to unlock more storage and monthly submissions.
+              </Text>
+              <InlineStack align="end">
+                <Link to="/app/settings/billing">
+                  <Button>Manage plan</Button>
+                </Link>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.AnnotatedSection>
 
         {/* Subscription Provider Connection — the main onboarding section */}
         <Layout.AnnotatedSection
