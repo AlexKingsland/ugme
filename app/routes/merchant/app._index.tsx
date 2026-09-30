@@ -1,6 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
+import { SubmissionThumbnail } from "../../components/SubmissionThumbnail";
+import { extractKeyFromContentUrl, getPresignedDownloadUrl } from "../../utils/r2.server";
 import {
   Page,
   Layout,
@@ -12,7 +14,6 @@ import {
   Button,
   ResourceList,
   ResourceItem,
-  Thumbnail,
   Box,
   InlineGrid,
   Divider,
@@ -67,7 +68,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }),
     ]);
 
-  const recentSubmissions = await prisma.submission.findMany({
+  const rawRecentSubmissions = await prisma.submission.findMany({
     where: { campaign: { shopId: shop.id } },
     include: {
       customer: { select: { email: true } },
@@ -76,6 +77,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orderBy: { createdAt: "desc" },
     take: 5,
   });
+
+  // Resolve R2 URLs to presigned download URLs for thumbnails
+  const recentSubmissions = await Promise.all(
+    rawRecentSubmissions.map(async (s) => {
+      let resolvedUrl = s.contentUrl;
+      const r2Key = extractKeyFromContentUrl(s.contentUrl);
+      if (r2Key && r2Key !== "pending") {
+        try {
+          resolvedUrl = await getPresignedDownloadUrl(r2Key);
+        } catch {
+          resolvedUrl = s.contentUrl;
+        }
+      }
+      return { ...s, contentUrl: resolvedUrl };
+    }),
+  );
 
   const campaigns = await prisma.campaign.findMany({
     where: { shopId: shop.id, status: "ACTIVE" },
@@ -220,10 +237,11 @@ export default function Dashboard() {
                         id={submission.id}
                         url={`/app/library/${submission.id}`}
                         media={
-                          <Thumbnail
-                            source={submission.thumbnailUrl || ""}
-                            alt={`Submission by ${submission.customer.email}`}
-                            size="small"
+                          <SubmissionThumbnail
+                            contentType={submission.contentType}
+                            contentUrl={submission.contentUrl}
+                            durationSecs={submission.durationSecs}
+                            size={40}
                           />
                         }
                       >

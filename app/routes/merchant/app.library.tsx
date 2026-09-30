@@ -1,5 +1,6 @@
 import { json } from "@remix-run/node";
 import { approveSubmission } from "../../utils/approval.server";
+import { SubmissionThumbnail } from "../../components/SubmissionThumbnail";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, Link } from "@remix-run/react";
 import {
@@ -528,41 +529,16 @@ export default function Library() {
           /* ───── PENDING: Review list ───── */
           <BlockStack gap="200">
             {items.map((sub: any) => {
-              const hasUrl = sub.contentUrl.startsWith("http");
               return (
               <Card key={sub.id}>
                 <InlineStack gap="400" blockAlign="center" wrap={false}>
                   {/* Thumbnail */}
                   <Link to={`/app/library/${sub.id}`} style={{ textDecoration: "none" }}>
-                    <div style={{ position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", background: "#1a1a1a", flexShrink: 0 }}>
-                      {sub.contentType === "VIDEO" && hasUrl ? (
-                        <video
-                          src={sub.contentUrl}
-                          preload="metadata"
-                          muted
-                          style={{ width: 64, height: 64, objectFit: "cover", display: "block" }}
-                        />
-                      ) : sub.contentType === "PHOTO" && hasUrl ? (
-                        <img
-                          src={sub.contentUrl}
-                          alt=""
-                          style={{ width: 64, height: 64, objectFit: "cover", display: "block" }}
-                        />
-                      ) : (
-                        <div style={{ width: 64, height: 64, display: "flex", alignItems: "center", justifyContent: "center", color: "#666", fontSize: 10 }}>
-                          {sub.contentType === "VIDEO" ? "VID" : "IMG"}
-                        </div>
-                      )}
-                      {sub.contentType === "VIDEO" && sub.durationSecs && (
-                        <div style={{
-                          position: "absolute", bottom: 2, right: 4,
-                          background: "rgba(0,0,0,0.7)", color: "#fff",
-                          fontSize: 10, fontWeight: 600, padding: "1px 4px", borderRadius: 3,
-                        }}>
-                          {formatDuration(sub.durationSecs)}
-                        </div>
-                      )}
-                    </div>
+                    <SubmissionThumbnail
+                      contentType={sub.contentType}
+                      contentUrl={sub.contentUrl}
+                      durationSecs={sub.durationSecs}
+                    />
                   </Link>
 
                   {/* Info */}
