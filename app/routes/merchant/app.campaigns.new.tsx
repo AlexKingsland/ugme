@@ -29,8 +29,8 @@ import prisma from "../../db.server";
 
 // ── Step definitions ────────────────────────────────────────────
 const STEPS = [
+  { key: "product-reward", label: "Product & Reward" },
   { key: "campaign", label: "Campaign" },
-  { key: "reward", label: "Reward" },
   { key: "rights", label: "Rights" },
   { key: "review", label: "Review" },
 ] as const;
@@ -356,8 +356,9 @@ export default function NewCampaignWizard() {
 
   const canAdvance = useCallback(() => {
     switch (step) {
-      case 0: return title.trim().length > 0 && moment.trim().length > 0 && productId.length > 0;
-      case 1: {
+      case 0: {
+        // Product & Reward: product selected + reward configured
+        if (!productId) return false;
         if (rewardType === "DISCOUNT_CODE") {
           return parseFloat(discountCodeAmount) > 0;
         }
@@ -367,6 +368,7 @@ export default function NewCampaignWizard() {
         if (discountType === "PERCENTAGE") return rewardCycles >= 1 && parseFloat(discountValue) > 0 && parseFloat(discountValue) <= 100;
         return false;
       }
+      case 1: return title.trim().length > 0 && moment.trim().length > 0;
       case 2: return rightsAcknowledged;
       case 3: return true;
       default: return false;
@@ -441,8 +443,8 @@ export default function NewCampaignWizard() {
     [title, moment, contentType, rewardType, discountCodeAmount, discountCodeType, discountCodeExpiryDays, discountCodeMinOrder, discountType, discountValue, rewardCycles, rewardFrequency, maxSubmissions, startDate, endDate, hasDateRange, hasMaxSubmissions, buildSpecs, requirements, submit, productId, productTitle, productImageUrl],
   );
 
-  // ── Step 0: Campaign ──────────────────────────────────────────
-  const renderStepCampaign = () => (
+  // ── Step 0: Product & Reward ───────────────────────────────────
+  const renderStepProductReward = () => (
     <Layout>
       <Layout.Section>
         <BlockStack gap="400">
@@ -477,234 +479,6 @@ export default function NewCampaignWizard() {
             </BlockStack>
           </Card>
 
-          {/* Core info */}
-          <Card>
-            <BlockStack gap="400">
-              <TextField
-                label="Campaign title"
-                value={title}
-                onChange={setTitle}
-                placeholder="e.g. Syrup Into Coffee"
-                autoComplete="off"
-              />
-
-              <BlockStack gap="200">
-                <Text as="span" variant="bodyMd" fontWeight="semibold">Content type</Text>
-                <ButtonGroup variant="segmented">
-                  <Button pressed={contentType === "VIDEO"} onClick={() => setContentType("VIDEO")}>
-                    Video
-                  </Button>
-                  <Button pressed={contentType === "PHOTO"} onClick={() => setContentType("PHOTO")}>
-                    Photo
-                  </Button>
-                </ButtonGroup>
-              </BlockStack>
-
-              <TextField
-                label="Creative moment"
-                value={moment}
-                onChange={setMoment}
-                placeholder="e.g. Pouring our syrup into your morning coffee"
-                helpText="Describe what you want customers to capture."
-                multiline={3}
-                autoComplete="off"
-              />
-            </BlockStack>
-          </Card>
-
-          {/* Content requirements */}
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Content requirements</Text>
-              {requirements.length > 0 && (
-                <BlockStack gap="200">
-                  {requirements.map((req, i) => (
-                    <InlineStack key={i} gap="200" blockAlign="center">
-                      <Box minWidth="0" width="100%">
-                        <Text as="span">{req}</Text>
-                      </Box>
-                      <Button variant="plain" tone="critical" onClick={() => removeRequirement(i)} size="slim">
-                        Remove
-                      </Button>
-                    </InlineStack>
-                  ))}
-                </BlockStack>
-              )}
-              <InlineStack gap="200" blockAlign="end">
-                <Box width="100%">
-                  <TextField
-                    label="Add a requirement"
-                    labelHidden
-                    value={newRequirement}
-                    onChange={setNewRequirement}
-                    placeholder="e.g. Product label must be visible"
-                    autoComplete="off"
-                    
-                  />
-                </Box>
-                <Button onClick={addRequirement} disabled={!newRequirement.trim()} size="slim">
-                  Add
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-
-          {/* Production specs (fixed) */}
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Production specs</Text>
-              <FormLayout>
-                <FormLayout.Group>
-                  <Select
-                    label="Orientation"
-                    options={[
-                      { label: "Portrait (vertical)", value: "portrait" },
-                      { label: "Landscape (horizontal)", value: "landscape" },
-                      { label: "Either", value: "either" },
-                    ]}
-                    value={orientation}
-                    onChange={setOrientation}
-                  />
-                  <Select
-                    label="Aspect ratio"
-                    options={[
-                      { label: "9:16", value: "9:16" },
-                      { label: "16:9", value: "16:9" },
-                      { label: "1:1 (Square)", value: "1:1" },
-                      { label: "4:5", value: "4:5" },
-                      { label: "Any", value: "any" },
-                    ]}
-                    value={aspectRatio}
-                    onChange={setAspectRatio}
-                  />
-                </FormLayout.Group>
-                <FormLayout.Group>
-                  {contentType === "VIDEO" && (
-                    <Select
-                      label="Duration"
-                      options={[
-                        { label: "15–30 seconds", value: "15-30" },
-                        { label: "15–60 seconds", value: "15-60" },
-                        { label: "30–90 seconds", value: "30-90" },
-                        { label: "1–3 minutes", value: "60-180" },
-                      ]}
-                      value={duration}
-                      onChange={setDuration}
-                    />
-                  )}
-                  <Select
-                    label="Quality"
-                    options={[
-                      { label: "720p", value: "720p" },
-                      { label: "1080p (recommended)", value: "1080p" },
-                      { label: "4K", value: "4k" },
-                    ]}
-                    value={quality}
-                    onChange={setQuality}
-                  />
-                  <Select
-                    label="Format"
-                    options={
-                      contentType === "VIDEO"
-                        ? [
-                            { label: "MP4", value: "mp4" },
-                            { label: "MOV", value: "mov" },
-                            { label: "Any", value: "any" },
-                          ]
-                        : [
-                            { label: "JPG", value: "jpg" },
-                            { label: "PNG", value: "png" },
-                            { label: "Any", value: "any" },
-                          ]
-                    }
-                    value={format}
-                    onChange={setFormat}
-                  />
-                </FormLayout.Group>
-              </FormLayout>
-            </BlockStack>
-          </Card>
-
-          {/* Reference scene */}
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Reference scene (optional)</Text>
-              <Text as="p" tone="subdued">
-                Upload an example {contentType === "VIDEO" ? "video" : "image"} to show customers the vibe you are going for.
-              </Text>
-              {referencePreview ? (
-                <BlockStack gap="300">
-                  <Box borderRadius="200" >
-                    <img
-                      src={referencePreview}
-                      alt="Reference scene"
-                      style={{ width: "100%", maxHeight: "300px", objectFit: "cover", display: "block", borderRadius: "8px" }}
-                    />
-                  </Box>
-                  <InlineStack gap="200" blockAlign="center">
-                    <Text as="span" tone="subdued">{referenceFile?.name}</Text>
-                    <Button variant="plain" tone="critical" onClick={removeReference} size="slim">
-                      Remove
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
-              ) : (
-                <DropZone
-                  accept={contentType === "VIDEO" ? "video/*" : "image/*"}
-                  type={contentType === "VIDEO" ? "video" : "image"}
-                  onDrop={handleReferenceDrop}
-                  allowMultiple={false}
-                >
-                  <DropZone.FileUpload actionHint={`or drop ${contentType === "VIDEO" ? "a video" : "an image"}`} />
-                </DropZone>
-              )}
-            </BlockStack>
-          </Card>
-        </BlockStack>
-      </Layout.Section>
-
-      {/* Sidebar preview */}
-      <Layout.Section variant="oneThird">
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">Preview</Text>
-            <Divider />
-            {productImageUrl && (
-              <Box borderRadius="200" >
-                <img src={productImageUrl} alt={productTitle} style={{ width: "100%", maxHeight: 140, objectFit: "contain", display: "block", borderRadius: 8, background: "#f9fafb" }} />
-              </Box>
-            )}
-            <InlineStack gap="200" blockAlign="center">
-              <Text as="p" variant="headingSm">{title || "Campaign title"}</Text>
-              <Badge>{contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
-            </InlineStack>
-            {productTitle && (
-              <Text as="p" variant="bodySm" tone="subdued">Product: {productTitle}</Text>
-            )}
-            <Text as="p" tone={moment ? undefined : "subdued"}>
-              {moment || "Your creative moment..."}
-            </Text>
-            {requirements.length > 0 && (
-              <>
-                <Divider />
-                <BlockStack gap="100">
-                  {requirements.map((r, i) => (
-                    <Text key={i} as="p" variant="bodySm" tone="subdued">{r}</Text>
-                  ))}
-                </BlockStack>
-              </>
-            )}
-          </BlockStack>
-        </Card>
-      </Layout.Section>
-    </Layout>
-  );
-
-  // ── Step 1: Reward ────────────────────────────────────────────
-  const renderStepReward = () => (
-    <Layout>
-      <Layout.Section>
-        <BlockStack gap="400">
           {/* Reward type selector */}
           <Card>
             <BlockStack gap="400">
@@ -911,54 +685,6 @@ export default function NewCampaignWizard() {
               </BlockStack>
             </Card>
           )}
-
-          {/* Limits - shared for both reward types */}
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Limits</Text>
-              <Checkbox
-                label="Set a submission cap"
-                checked={hasMaxSubmissions}
-                onChange={setHasMaxSubmissions}
-              />
-              {hasMaxSubmissions && (
-                <TextField
-                  label="Maximum submissions"
-                  type="number"
-                  value={maxSubmissions}
-                  onChange={setMaxSubmissions}
-                  placeholder="e.g. 50"
-                  min={1}
-                  autoComplete="off"
-                />
-              )}
-              <Checkbox
-                label="Set a date range"
-                checked={hasDateRange}
-                onChange={setHasDateRange}
-              />
-              {hasDateRange && (
-                <FormLayout>
-                  <FormLayout.Group>
-                    <TextField
-                      label="Start date"
-                      type="date"
-                      value={startDate}
-                      onChange={setStartDate}
-                      autoComplete="off"
-                    />
-                    <TextField
-                      label="End date"
-                      type="date"
-                      value={endDate}
-                      onChange={setEndDate}
-                      autoComplete="off"
-                    />
-                  </FormLayout.Group>
-                </FormLayout>
-              )}
-            </BlockStack>
-          </Card>
         </BlockStack>
       </Layout.Section>
 
@@ -1038,6 +764,282 @@ export default function NewCampaignWizard() {
                   {Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24))} days
                 </Text>
               </InlineStack>
+            )}
+          </BlockStack>
+        </Card>
+      </Layout.Section>
+    </Layout>
+  );
+
+  // ── Step 1: Campaign Details ──────────────────────────────────
+  const renderStepCampaign = () => (
+    <Layout>
+      <Layout.Section>
+        <BlockStack gap="400">
+          {/* Core info */}
+          <Card>
+            <BlockStack gap="400">
+              <TextField
+                label="Campaign title"
+                value={title}
+                onChange={setTitle}
+                placeholder="e.g. Syrup Into Coffee"
+                autoComplete="off"
+              />
+
+              <BlockStack gap="200">
+                <Text as="span" variant="bodyMd" fontWeight="semibold">Content type</Text>
+                <ButtonGroup variant="segmented">
+                  <Button pressed={contentType === "VIDEO"} onClick={() => setContentType("VIDEO")}>
+                    Video
+                  </Button>
+                  <Button pressed={contentType === "PHOTO"} onClick={() => setContentType("PHOTO")}>
+                    Photo
+                  </Button>
+                </ButtonGroup>
+              </BlockStack>
+
+              <TextField
+                label="Creative moment"
+                value={moment}
+                onChange={setMoment}
+                placeholder="e.g. Pouring our syrup into your morning coffee"
+                helpText="Describe what you want customers to capture."
+                multiline={3}
+                autoComplete="off"
+              />
+            </BlockStack>
+          </Card>
+
+          {/* Content requirements */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingMd">Content requirements</Text>
+              {requirements.length > 0 && (
+                <BlockStack gap="200">
+                  {requirements.map((req, i) => (
+                    <InlineStack key={i} gap="200" blockAlign="center">
+                      <Box minWidth="0" width="100%">
+                        <Text as="span">{req}</Text>
+                      </Box>
+                      <Button variant="plain" tone="critical" onClick={() => removeRequirement(i)} size="slim">
+                        Remove
+                      </Button>
+                    </InlineStack>
+                  ))}
+                </BlockStack>
+              )}
+              <InlineStack gap="200" blockAlign="end">
+                <Box width="100%">
+                  <TextField
+                    label="Add a requirement"
+                    labelHidden
+                    value={newRequirement}
+                    onChange={setNewRequirement}
+                    placeholder="e.g. Product label must be visible"
+                    autoComplete="off"
+                    
+                  />
+                </Box>
+                <Button onClick={addRequirement} disabled={!newRequirement.trim()} size="slim">
+                  Add
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+
+          {/* Production specs (fixed) */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingMd">Production specs</Text>
+              <FormLayout>
+                <FormLayout.Group>
+                  <Select
+                    label="Orientation"
+                    options={[
+                      { label: "Portrait (vertical)", value: "portrait" },
+                      { label: "Landscape (horizontal)", value: "landscape" },
+                      { label: "Either", value: "either" },
+                    ]}
+                    value={orientation}
+                    onChange={setOrientation}
+                  />
+                  <Select
+                    label="Aspect ratio"
+                    options={[
+                      { label: "9:16", value: "9:16" },
+                      { label: "16:9", value: "16:9" },
+                      { label: "1:1 (Square)", value: "1:1" },
+                      { label: "4:5", value: "4:5" },
+                      { label: "Any", value: "any" },
+                    ]}
+                    value={aspectRatio}
+                    onChange={setAspectRatio}
+                  />
+                </FormLayout.Group>
+                <FormLayout.Group>
+                  {contentType === "VIDEO" && (
+                    <Select
+                      label="Duration"
+                      options={[
+                        { label: "15–30 seconds", value: "15-30" },
+                        { label: "15–60 seconds", value: "15-60" },
+                        { label: "30–90 seconds", value: "30-90" },
+                        { label: "1–3 minutes", value: "60-180" },
+                      ]}
+                      value={duration}
+                      onChange={setDuration}
+                    />
+                  )}
+                  <Select
+                    label="Quality"
+                    options={[
+                      { label: "720p", value: "720p" },
+                      { label: "1080p (recommended)", value: "1080p" },
+                      { label: "4K", value: "4k" },
+                    ]}
+                    value={quality}
+                    onChange={setQuality}
+                  />
+                  <Select
+                    label="Format"
+                    options={
+                      contentType === "VIDEO"
+                        ? [
+                            { label: "MP4", value: "mp4" },
+                            { label: "MOV", value: "mov" },
+                            { label: "Any", value: "any" },
+                          ]
+                        : [
+                            { label: "JPG", value: "jpg" },
+                            { label: "PNG", value: "png" },
+                            { label: "Any", value: "any" },
+                          ]
+                    }
+                    value={format}
+                    onChange={setFormat}
+                  />
+                </FormLayout.Group>
+              </FormLayout>
+            </BlockStack>
+          </Card>
+
+          {/* Reference scene */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingMd">Reference scene (optional)</Text>
+              <Text as="p" tone="subdued">
+                Upload an example {contentType === "VIDEO" ? "video" : "image"} to show customers the vibe you are going for.
+              </Text>
+              {referencePreview ? (
+                <BlockStack gap="300">
+                  <Box borderRadius="200" >
+                    <img
+                      src={referencePreview}
+                      alt="Reference scene"
+                      style={{ width: "100%", maxHeight: "300px", objectFit: "cover", display: "block", borderRadius: "8px" }}
+                    />
+                  </Box>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="span" tone="subdued">{referenceFile?.name}</Text>
+                    <Button variant="plain" tone="critical" onClick={removeReference} size="slim">
+                      Remove
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              ) : (
+                <DropZone
+                  accept={contentType === "VIDEO" ? "video/*" : "image/*"}
+                  type={contentType === "VIDEO" ? "video" : "image"}
+                  onDrop={handleReferenceDrop}
+                  allowMultiple={false}
+                >
+                  <DropZone.FileUpload actionHint={`or drop ${contentType === "VIDEO" ? "a video" : "an image"}`} />
+                </DropZone>
+              )}
+            </BlockStack>
+          </Card>
+
+          {/* Limits - shared for both reward types */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingMd">Limits</Text>
+              <Checkbox
+                label="Set a submission cap"
+                checked={hasMaxSubmissions}
+                onChange={setHasMaxSubmissions}
+              />
+              {hasMaxSubmissions && (
+                <TextField
+                  label="Maximum submissions"
+                  type="number"
+                  value={maxSubmissions}
+                  onChange={setMaxSubmissions}
+                  placeholder="e.g. 50"
+                  min={1}
+                  autoComplete="off"
+                />
+              )}
+              <Checkbox
+                label="Set a date range"
+                checked={hasDateRange}
+                onChange={setHasDateRange}
+              />
+              {hasDateRange && (
+                <FormLayout>
+                  <FormLayout.Group>
+                    <TextField
+                      label="Start date"
+                      type="date"
+                      value={startDate}
+                      onChange={setStartDate}
+                      autoComplete="off"
+                    />
+                    <TextField
+                      label="End date"
+                      type="date"
+                      value={endDate}
+                      onChange={setEndDate}
+                      autoComplete="off"
+                    />
+                  </FormLayout.Group>
+                </FormLayout>
+              )}
+            </BlockStack>
+          </Card>
+        </BlockStack>
+      </Layout.Section>
+
+      {/* Sidebar preview */}
+      <Layout.Section variant="oneThird">
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingMd">Preview</Text>
+            <Divider />
+            {productImageUrl && (
+              <Box borderRadius="200" >
+                <img src={productImageUrl} alt={productTitle} style={{ width: "100%", maxHeight: 140, objectFit: "contain", display: "block", borderRadius: 8, background: "#f9fafb" }} />
+              </Box>
+            )}
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="p" variant="headingSm">{title || "Campaign title"}</Text>
+              <Badge>{contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
+            </InlineStack>
+            {productTitle && (
+              <Text as="p" variant="bodySm" tone="subdued">Product: {productTitle}</Text>
+            )}
+            <Text as="p" tone={moment ? undefined : "subdued"}>
+              {moment || "Your creative moment..."}
+            </Text>
+            {requirements.length > 0 && (
+              <>
+                <Divider />
+                <BlockStack gap="100">
+                  {requirements.map((r, i) => (
+                    <Text key={i} as="p" variant="bodySm" tone="subdued">{r}</Text>
+                  ))}
+                </BlockStack>
+              </>
             )}
           </BlockStack>
         </Card>
@@ -1278,7 +1280,7 @@ export default function NewCampaignWizard() {
     );
   };
 
-  const stepRenderers = [renderStepCampaign, renderStepReward, renderStepRights, renderStepReview];
+  const stepRenderers = [renderStepProductReward, renderStepCampaign, renderStepRights, renderStepReview];
 
   return (
     <Page
