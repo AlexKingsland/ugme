@@ -66,6 +66,11 @@ enum DiscountType {
   PERCENTAGE
 }
 
+enum RewardType {
+  DISCOUNT_CODE
+  SUBSCRIPTION_DISCOUNT
+}
+
 enum BillingFrequency {
   DAY
   WEEK
@@ -133,10 +138,17 @@ model Campaign {
   productImageUrl  String?        // Product image URL for hero display
   contentType      ContentType      @default(VIDEO)
   captureSpecs     String         @default("[]") // JSON array of spec objects
+  rewardType       RewardType     @default(DISCOUNT_CODE)
+  // Subscription discount fields
   rewardCycles     Int            @default(1)
   rewardFrequency  BillingFrequency @default(MONTH)
   discountType     DiscountType   @default(FREE)
   discountValue    Float          @default(0)
+  // Discount code fields
+  discountCodeAmount    Float?         // e.g. 20 (for 20% or $20)
+  discountCodeType      String?        // "PERCENTAGE" or "FIXED_AMOUNT"
+  discountCodeExpiryDays Int?          // e.g. 30 days from approval
+  discountCodeMinOrder  Float?         // minimum order amount to use code
   startDate        DateTime?
   endDate          DateTime?
   maxSubmissions   Int?
@@ -206,8 +218,9 @@ model Reward {
   id                 String               @id @default(cuid())
   submissionId       String               @unique
   customerId         String
+  rewardType         RewardType       @default(DISCOUNT_CODE)
   cycles             Int              @default(1)
-  discountProvider   SubscriptionProvider
+  discountProvider   String?          // "RECHARGE" or "SHOPIFY_NATIVE" for subscription rewards
   externalDiscountId String?
   rechargeChargeId   String?
   rechargeSubscriptionId String?

@@ -19,6 +19,7 @@ export default [
       route("settings", "routes/merchant/app.settings.tsx"),
       route("settings/billing", "routes/merchant/app.settings.billing.tsx"),
       route("api/test-connection", "routes/merchant/app.api.test-connection.tsx"),
+      route("api/check-selling-plans", "routes/merchant/app.api.check-selling-plans.tsx"),
     ]),
   ]),
 

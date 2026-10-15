@@ -403,7 +403,13 @@ export default function CampaignDashboard() {
                         Reward
                       </Text>
                       <Text as="span" fontWeight="semibold">
-                        {campaign.rewardCycles} free {campaign.rewardFrequency === "DAY" ? (campaign.rewardCycles !== 1 ? "days" : "day") : campaign.rewardFrequency === "WEEK" ? (campaign.rewardCycles !== 1 ? "weeks" : "week") : (campaign.rewardCycles !== 1 ? "months" : "month")}
+                        {campaign.rewardType === "DISCOUNT_CODE"
+                          ? `${campaign.discountCodeAmount}${campaign.discountCodeType === "PERCENTAGE" ? "%" : "$"} off discount code${campaign.discountCodeExpiryDays ? ` (${campaign.discountCodeExpiryDays}d)` : ""}`
+                          : campaign.discountType === "FREE"
+                            ? `${campaign.rewardCycles} free ${campaign.rewardFrequency === "DAY" ? (campaign.rewardCycles !== 1 ? "days" : "day") : campaign.rewardFrequency === "WEEK" ? (campaign.rewardCycles !== 1 ? "weeks" : "week") : (campaign.rewardCycles !== 1 ? "months" : "month")}`
+                            : campaign.discountType === "FIXED_AMOUNT"
+                              ? `$${campaign.discountValue} off × ${campaign.rewardCycles}mo`
+                              : `${campaign.discountValue}% off × ${campaign.rewardCycles}mo`}
                       </Text>
                     </InlineStack>
                     <InlineStack align="space-between">

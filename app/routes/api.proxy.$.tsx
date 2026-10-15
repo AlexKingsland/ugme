@@ -42,11 +42,26 @@ function escapeHtml(str: string): string {
 }
 
 function rewardText(campaign: {
+  rewardType?: string;
   discountType: string;
   discountValue: number;
   rewardCycles: number;
   rewardFrequency: string;
+  discountCodeAmount?: number | null;
+  discountCodeType?: string | null;
+  discountCodeExpiryDays?: number | null;
 }): string {
+  // Discount code reward type
+  if (campaign.rewardType === "DISCOUNT_CODE" && campaign.discountCodeAmount) {
+    const discountText = campaign.discountCodeType === "PERCENTAGE"
+      ? `${campaign.discountCodeAmount}% off`
+      : `$${campaign.discountCodeAmount} off`;
+    const expiryText = campaign.discountCodeExpiryDays
+      ? ` (expires in ${campaign.discountCodeExpiryDays} days)`
+      : "";
+    return `${discountText} discount code${expiryText}`;
+  }
+  // Subscription discount reward type (legacy default)
   if (campaign.discountType === "FREE")
     return `${campaign.rewardCycles} month${campaign.rewardCycles !== 1 ? "s" : ""} free`;
   if (campaign.discountType === "FIXED_AMOUNT")
@@ -276,6 +291,11 @@ async function handleCampaignLibrary(shop: ShopInfo, brandName: string, loggedIn
       rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
+      rewardType: true,
+      discountCodeAmount: true,
+      discountCodeType: true,
+      discountCodeExpiryDays: true,
+      discountCodeMinOrder: true,
       maxSubmissions: true,
       productTitle: true,
       productImageUrl: true,
@@ -322,13 +342,13 @@ async function handleCampaignLibrary(shop: ShopInfo, brandName: string, loggedIn
     <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">Real content, real discount.</h1>
     <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 24px;">
       ${campaigns.length} ask${campaigns.length !== 1 ? "s" : ""} live right now. Pick one — approved videos
-      reduce your next subscription charge.
+      earn rewards for approved content.
     </p>
     <div style="display: flex; flex-direction: column; gap: 12px;">
       ${campaignCards || '<p style="color: var(--ugme-muted);">No campaigns available right now.</p>'}
     </div>
     <p style="font-size: 12px; color: var(--ugme-muted); margin-top: 24px;">
-      One submission per ask. Approved videos discount your next charge automatically — no code, no wallet.
+      One submission per ask. Approved content earns you the listed reward.
     </p>
   `;
 
@@ -350,6 +370,11 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
       rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
+      rewardType: true,
+      discountCodeAmount: true,
+      discountCodeType: true,
+      discountCodeExpiryDays: true,
+      discountCodeMinOrder: true,
       maxSubmissions: true,
       endDate: true,
       status: true,
@@ -375,7 +400,7 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
   }
 
   // ── Product-specific subscription verification (Recharge) ──
-  if (shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
     try {
       const rechargeCustomer = await getRechargeCustomer(
         loggedInCustomerId,
@@ -504,6 +529,11 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
+      rewardType: true,
+      discountCodeAmount: true,
+      discountCodeType: true,
+      discountCodeExpiryDays: true,
+      discountCodeMinOrder: true,
       maxSubmissions: true,
       status: true,
       shopId: true,
@@ -553,7 +583,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   // ── Product-specific subscription verification (Recharge) ──
   let matchingSubscriptionId: string | null = null;
 
-  if (shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
     try {
       const rechargeCustomer = await getRechargeCustomer(
         customer.shopifyCustomerId || loggedInCustomerId,
@@ -736,7 +766,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
           </li>
           <li style="display: flex; gap: 8px;">
             <span style="flex-shrink: 0;">✓</span>
-            <span>If approved, your discount (${escapeHtml(reward)}) is applied automatically to your next subscription charge.</span>
+            <span>If approved, your reward (${escapeHtml(reward)}) will be delivered to you.</span>
           </li>
           <li style="display: flex; gap: 8px;">
             <span style="flex-shrink: 0;">✓</span>
@@ -854,7 +884,7 @@ const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
 async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, request: Request) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true },
+    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true, rewardType: true },
   });
 
   if (!campaign || campaign.shopId !== shop.id || campaign.status !== "ACTIVE") {
@@ -867,7 +897,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
   // ── Product-specific subscription verification (Recharge) ──
-  if (shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
     try {
       const rechargeCustomer = await getRechargeCustomer(
         loggedInCustomerId,
@@ -992,6 +1022,11 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
       rewardCycles: true, rewardFrequency: true,
       discountType: true,
       discountValue: true,
+      rewardType: true,
+      discountCodeAmount: true,
+      discountCodeType: true,
+      discountCodeExpiryDays: true,
+      discountCodeMinOrder: true,
       contentType: true,
       shopId: true,
     },
@@ -1019,7 +1054,7 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
           </div>
           <div style="display: flex; gap: 12px; align-items: flex-start;">
             <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--ugme-border); color: var(--ugme-fg); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;">2</div>
-            <span>If approved, <strong>${escapeHtml(reward)}</strong> is applied to your next subscription charge automatically.</span>
+            <span>If approved, your reward of <strong>${escapeHtml(reward)}</strong> will be delivered to you.</span>
           </div>
           <div style="display: flex; gap: 12px; align-items: flex-start;">
             <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--ugme-border); color: var(--ugme-fg); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;">3</div>
@@ -1079,6 +1114,11 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
           rewardCycles: true, rewardFrequency: true,
           discountType: true,
           discountValue: true,
+          rewardType: true,
+          discountCodeAmount: true,
+          discountCodeType: true,
+          discountCodeExpiryDays: true,
+          discountCodeMinOrder: true,
           productImageUrl: true,
         },
       },
@@ -1126,7 +1166,7 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
             ${statusBadge(s.status)}
             <span style="font-size: 12px; color: var(--ugme-muted);">${date}</span>
           </div>
-          ${s.status === "APPROVED" ? `<div style="font-size: 13px; color: var(--ugme-success);">${escapeHtml(reward)} — applied to subscription</div>` : ""}
+          ${s.status === "APPROVED" ? `<div style="font-size: 13px; color: var(--ugme-success);">${escapeHtml(reward)} — reward applied</div>` : ""}
         </div>
         <span style="color: var(--ugme-muted); font-size: 18px; align-self: center; flex-shrink: 0;">›</span>
       </a>
@@ -1208,6 +1248,11 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
           rewardCycles: true, rewardFrequency: true,
           discountType: true,
           discountValue: true,
+          rewardType: true,
+          discountCodeAmount: true,
+          discountCodeType: true,
+          discountCodeExpiryDays: true,
+          discountCodeMinOrder: true,
           productTitle: true,
           productImageUrl: true,
         },
@@ -1298,7 +1343,7 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
   if (submission.status === "APPROVED") {
     const appliedLine = submission.reward?.appliedAt
       ? '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Applied on ' + new Date(submission.reward.appliedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) + '</p>'
-      : '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Will be applied to your next subscription charge</p>';
+      : '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Your reward will be delivered soon</p>';
     rewardHtml = `<div style="background: #ecfdf5; border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 20px;">
         <div class="ugme-section-label" style="color: #065f46;">Reward</div>
         <p style="font-size: 15px; font-weight: 600; color: #065f46; margin: 0;">${escapeHtml(reward)}</p>

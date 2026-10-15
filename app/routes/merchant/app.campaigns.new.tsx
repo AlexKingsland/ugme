@@ -22,7 +22,7 @@ import {
   DropZone,
   Icon,
 } from "@shopify/polaris";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
@@ -59,10 +59,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const title = formData.get("title") as string;
   const moment = formData.get("moment") as string;
   const contentType = formData.get("contentType") as string;
-  const discountType = formData.get("discountType") as string;
-  const discountValue = parseFloat(formData.get("discountValue") as string) || 0;
-  const rewardCycles = parseInt(formData.get("rewardCycles") as string, 10) || 1;
-  const rewardFrequency = (formData.get("rewardFrequency") as string) || "MONTH";
+  const rewardType = (formData.get("rewardType") as string) || "DISCOUNT_CODE";
   const maxSubmissions = formData.get("maxSubmissions")
     ? parseInt(formData.get("maxSubmissions") as string, 10)
     : null;
@@ -78,10 +75,61 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const errors: string[] = [];
   if (!title?.trim()) errors.push("Title is required.");
   if (!moment?.trim()) errors.push("Creative moment is required.");
-  if (rewardCycles < 1 || rewardCycles > 12) errors.push("Reward months must be 1-12.");
-  if (discountType === "FIXED_AMOUNT" && discountValue <= 0) errors.push("Discount amount must be greater than 0.");
-  if (discountType === "PERCENTAGE" && (discountValue <= 0 || discountValue > 100)) errors.push("Discount percentage must be between 1-100.");
   if (startDate && endDate && endDate <= startDate) errors.push("End date must be after start date.");
+
+  // Build campaign data based on reward type
+  let rewardData: Record<string, any> = { rewardType };
+
+  if (rewardType === "DISCOUNT_CODE") {
+    const discountCodeAmount = parseFloat(formData.get("discountCodeAmount") as string) || 0;
+    const discountCodeType = (formData.get("discountCodeType") as string) || "PERCENTAGE";
+    const discountCodeExpiryDays = formData.get("discountCodeExpiryDays")
+      ? parseInt(formData.get("discountCodeExpiryDays") as string, 10)
+      : null;
+    const discountCodeMinOrder = formData.get("discountCodeMinOrder")
+      ? parseFloat(formData.get("discountCodeMinOrder") as string)
+      : null;
+
+    if (discountCodeAmount <= 0) errors.push("Discount amount must be greater than 0.");
+    if (discountCodeType === "PERCENTAGE" && discountCodeAmount > 100) errors.push("Discount percentage must be between 1-100.");
+
+    rewardData = {
+      ...rewardData,
+      discountCodeAmount,
+      discountCodeType,
+      discountCodeExpiryDays,
+      discountCodeMinOrder,
+      // Set subscription fields to defaults so they don't interfere
+      discountType: "FREE",
+      discountValue: 0,
+      rewardCycles: 1,
+      rewardFrequency: "MONTH",
+    };
+  } else {
+    // SUBSCRIPTION_DISCOUNT
+    const discountType = formData.get("discountType") as string;
+    const discountValue = parseFloat(formData.get("discountValue") as string) || 0;
+    const rewardCycles = parseInt(formData.get("rewardCycles") as string, 10) || 1;
+    const rewardFrequency = (formData.get("rewardFrequency") as string) || "MONTH";
+
+    if (rewardCycles < 1 || rewardCycles > 12) errors.push("Reward months must be 1-12.");
+    if (discountType === "FIXED_AMOUNT" && discountValue <= 0) errors.push("Discount amount must be greater than 0.");
+    if (discountType === "PERCENTAGE" && (discountValue <= 0 || discountValue > 100)) errors.push("Discount percentage must be between 1-100.");
+
+    rewardData = {
+      ...rewardData,
+      discountType: discountType as any,
+      discountValue,
+      rewardCycles,
+      rewardFrequency: rewardFrequency as any,
+      // Clear discount code fields
+      discountCodeAmount: null,
+      discountCodeType: null,
+      discountCodeExpiryDays: null,
+      discountCodeMinOrder: null,
+    };
+  }
+
   if (errors.length > 0) return json({ error: errors.join(" ") }, { status: 400 });
 
   let captureSpecs = "[]";
@@ -98,15 +146,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       productImageUrl: (formData.get("productImageUrl") as string) || null,
       moment: moment.trim(),
       contentType: contentType as any,
-      discountType: discountType as any,
-      discountValue,
-      rewardCycles,
-      rewardFrequency: rewardFrequency as any,
       maxSubmissions,
       startDate,
       endDate,
       captureSpecs,
       status: saveAsDraft ? "DRAFT" : "ACTIVE",
+      ...rewardData,
     },
   });
 
@@ -165,7 +210,7 @@ function frequencyUnit(freq: string, count: number): string {
   return count === 1 ? singular : plural;
 }
 
-function formatReward(discountType: string, discountValue: string, rewardCycles: number, rewardFrequency: string = "MONTH"): string {
+function formatSubscriptionReward(discountType: string, discountValue: string, rewardCycles: number, rewardFrequency: string = "MONTH"): string {
   const unit = `${rewardCycles} ${frequencyUnit(rewardFrequency, rewardCycles)}`;
   if (discountType === "FREE") return `Free for ${unit}`;
   if (discountType === "FIXED_AMOUNT") return `$${discountValue} off × ${unit}`;
@@ -173,34 +218,15 @@ function formatReward(discountType: string, discountValue: string, rewardCycles:
   return unit;
 }
 
+function formatDiscountCodeReward(amount: number, type: string, expiryDays?: number | null): string {
+  const discountText = type === "PERCENTAGE" ? `${amount}% off` : `$${amount} off`;
+  const expiryText = expiryDays ? ` (expires in ${expiryDays} days)` : "";
+  return `${discountText} discount code${expiryText}`;
+}
+
 // ── Main component ──────────────────────────────────────────────
 export default function NewCampaignWizard() {
   const { providerConnected } = useLoaderData<typeof loader>();
-
-  if (!providerConnected) {
-    return (
-      <Page
-        title="New campaign"
-        backAction={{ content: "Campaigns", url: "/app/campaigns" }}
-      >
-        <Layout>
-          <Layout.Section>
-            <Banner
-              title="Connect your subscription provider first"
-              tone="warning"
-              action={{ content: "Go to Settings", url: "/app/settings" }}
-            >
-              <p>
-                Before creating a campaign, you need to connect and verify your
-                subscription provider API in Settings. This allows UGME to apply
-                discount rewards when you approve customer submissions.
-              </p>
-            </Banner>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    );
-  }
 
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -229,11 +255,24 @@ export default function NewCampaignWizard() {
   const [referenceFile, setReferenceFile] = useState<File | null>(null);
   const [referencePreview, setReferencePreview] = useState<string | null>(null);
 
-  // Reward
+  // Reward type
+  const [rewardType, setRewardType] = useState<"DISCOUNT_CODE" | "SUBSCRIPTION_DISCOUNT">("DISCOUNT_CODE");
+  const [hasSellingPlan, setHasSellingPlan] = useState(false);
+  const [checkingSellingPlan, setCheckingSellingPlan] = useState(false);
+
+  // Discount code fields
+  const [discountCodeAmount, setDiscountCodeAmount] = useState("");
+  const [discountCodeType, setDiscountCodeType] = useState("PERCENTAGE");
+  const [discountCodeExpiryDays, setDiscountCodeExpiryDays] = useState("30");
+  const [discountCodeMinOrder, setDiscountCodeMinOrder] = useState("");
+
+  // Subscription discount fields (existing)
   const [discountType, setDiscountType] = useState("FREE");
   const [discountValue, setDiscountValue] = useState("");
   const [rewardCycles, setRewardCycles] = useState(1);
   const [rewardFrequency, setRewardFrequency] = useState("MONTH");
+
+  // Limits
   const [hasMaxSubmissions, setHasMaxSubmissions] = useState(false);
   const [maxSubmissions, setMaxSubmissions] = useState("");
   const [hasDateRange, setHasDateRange] = useState(false);
@@ -249,6 +288,26 @@ export default function NewCampaignWizard() {
   const [productImageUrl, setProductImageUrl] = useState("");
   const shopify = useAppBridge();
 
+  // Check for selling plans when a product is selected
+  useEffect(() => {
+    if (!productId) {
+      setHasSellingPlan(false);
+      return;
+    }
+    setCheckingSellingPlan(true);
+    fetch(`/app/api/check-selling-plans?productId=${encodeURIComponent(productId)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        console.log("[UGME] check-selling-plans result:", data);
+        setHasSellingPlan(data.hasSellingPlans ?? false);
+        setCheckingSellingPlan(false);
+      })
+      .catch(() => {
+        setHasSellingPlan(false);
+        setCheckingSellingPlan(false);
+      });
+  }, [productId]);
+
   const handleProductSelect = useCallback(async () => {
     try {
       const selected = await shopify.resourcePicker({
@@ -262,6 +321,8 @@ export default function NewCampaignWizard() {
         setProductId(product.id);
         setProductTitle(product.title);
         setProductImageUrl(product.images?.[0]?.originalSrc || "");
+        // Reset reward type when product changes
+        setRewardType("DISCOUNT_CODE");
       }
     } catch (e) {
       // User cancelled picker
@@ -297,6 +358,10 @@ export default function NewCampaignWizard() {
     switch (step) {
       case 0: return title.trim().length > 0 && moment.trim().length > 0 && productId.length > 0;
       case 1: {
+        if (rewardType === "DISCOUNT_CODE") {
+          return parseFloat(discountCodeAmount) > 0;
+        }
+        // Subscription discount
         if (discountType === "FREE") return rewardCycles >= 1;
         if (discountType === "FIXED_AMOUNT") return rewardCycles >= 1 && parseFloat(discountValue) > 0;
         if (discountType === "PERCENTAGE") return rewardCycles >= 1 && parseFloat(discountValue) > 0 && parseFloat(discountValue) <= 100;
@@ -306,7 +371,7 @@ export default function NewCampaignWizard() {
       case 3: return true;
       default: return false;
     }
-  }, [step, title, moment, rewardCycles, rewardFrequency, discountType, discountValue, rightsAcknowledged]);
+  }, [step, title, moment, productId, rewardType, discountCodeAmount, rewardCycles, discountType, discountValue, rightsAcknowledged]);
 
   // Build specs array from the fixed fields
   const buildSpecs = useCallback(() => {
@@ -328,7 +393,14 @@ export default function NewCampaignWizard() {
     return specs;
   }, [orientation, aspectRatio, quality, format, contentType, duration]);
 
-  const rewardLabel = formatReward(discountType, discountValue, rewardCycles, rewardFrequency);
+  // Reward label for display
+  const rewardLabel = rewardType === "DISCOUNT_CODE"
+    ? formatDiscountCodeReward(
+        parseFloat(discountCodeAmount) || 0,
+        discountCodeType,
+        discountCodeExpiryDays ? parseInt(discountCodeExpiryDays) : null,
+      )
+    : formatSubscriptionReward(discountType, discountValue, rewardCycles, rewardFrequency);
 
   const handlePublish = useCallback(
     (asDraft: boolean) => {
@@ -343,10 +415,20 @@ export default function NewCampaignWizard() {
       if (productImageUrl) formData.set("productImageUrl", productImageUrl);
       formData.set("moment", moment);
       formData.set("contentType", contentType);
-      formData.set("discountType", discountType);
-      formData.set("discountValue", discountType === "FREE" ? "0" : discountValue);
-      formData.set("rewardCycles", String(rewardCycles));
-      formData.set("rewardFrequency", rewardFrequency);
+      formData.set("rewardType", rewardType);
+
+      if (rewardType === "DISCOUNT_CODE") {
+        formData.set("discountCodeAmount", discountCodeAmount || "0");
+        formData.set("discountCodeType", discountCodeType);
+        if (discountCodeExpiryDays) formData.set("discountCodeExpiryDays", discountCodeExpiryDays);
+        if (discountCodeMinOrder) formData.set("discountCodeMinOrder", discountCodeMinOrder);
+      } else {
+        formData.set("discountType", discountType);
+        formData.set("discountValue", discountType === "FREE" ? "0" : discountValue);
+        formData.set("rewardCycles", String(rewardCycles));
+        formData.set("rewardFrequency", rewardFrequency);
+      }
+
       if (hasMaxSubmissions && maxSubmissions) formData.set("maxSubmissions", maxSubmissions);
       if (hasDateRange) {
         if (startDate) formData.set("startDate", startDate);
@@ -356,7 +438,7 @@ export default function NewCampaignWizard() {
       formData.set("saveAsDraft", String(asDraft));
       submit(formData, { method: "post" });
     },
-    [title, moment, contentType, discountType, discountValue, rewardCycles, rewardFrequency, maxSubmissions, startDate, endDate, hasDateRange, hasMaxSubmissions, buildSpecs, requirements, submit],
+    [title, moment, contentType, rewardType, discountCodeAmount, discountCodeType, discountCodeExpiryDays, discountCodeMinOrder, discountType, discountValue, rewardCycles, rewardFrequency, maxSubmissions, startDate, endDate, hasDateRange, hasMaxSubmissions, buildSpecs, requirements, submit, productId, productTitle, productImageUrl],
   );
 
   // ── Step 0: Campaign ──────────────────────────────────────────
@@ -457,7 +539,7 @@ export default function NewCampaignWizard() {
                     onChange={setNewRequirement}
                     placeholder="e.g. Product label must be visible"
                     autoComplete="off"
-                    onKeyDown={(e: React.KeyboardEvent) => { if (e.key === "Enter") { e.preventDefault(); addRequirement(); } }}
+                    
                   />
                 </Box>
                 <Button onClick={addRequirement} disabled={!newRequirement.trim()} size="slim">
@@ -622,62 +704,216 @@ export default function NewCampaignWizard() {
   const renderStepReward = () => (
     <Layout>
       <Layout.Section>
-        <Card>
-          <BlockStack gap="500">
-            <Text as="h2" variant="headingLg">Set the reward</Text>
-
-            {/* Discount type selector */}
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Discount type</Text>
-              <ButtonGroup variant="segmented">
-                <Button pressed={discountType === "FREE"} onClick={() => { setDiscountType("FREE"); setDiscountValue(""); }}>
-                  Free
-                </Button>
-                <Button pressed={discountType === "FIXED_AMOUNT"} onClick={() => setDiscountType("FIXED_AMOUNT")}>
-                  $ amount off
-                </Button>
-                <Button pressed={discountType === "PERCENTAGE"} onClick={() => setDiscountType("PERCENTAGE")}>
-                  % off
-                </Button>
-              </ButtonGroup>
-            </BlockStack>
-
-            {/* Discount value (only for non-free) */}
-            {discountType !== "FREE" && (
-              <TextField
-                label={discountType === "FIXED_AMOUNT" ? `Amount off per ${rewardFrequency === "DAY" ? "day" : rewardFrequency === "WEEK" ? "week" : "month"} ($)` : "Percentage off"}
-                type="number"
-                value={discountValue}
-                onChange={setDiscountValue}
-                placeholder={discountType === "FIXED_AMOUNT" ? "e.g. 10" : "e.g. 50"}
-                prefix={discountType === "FIXED_AMOUNT" ? "$" : undefined}
-                suffix={discountType === "PERCENTAGE" ? "%" : undefined}
-                min={1}
-                max={discountType === "PERCENTAGE" ? 100 : undefined}
-                autoComplete="off"
-              />
-            )}
-
-            {/* Duration */}
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Duration</Text>
-              <RangeSlider
-                label={`${rewardCycles} ${rewardCycles !== 1 ? (rewardFrequency === "DAY" ? "days" : rewardFrequency === "WEEK" ? "weeks" : "months") : (rewardFrequency === "DAY" ? "day" : rewardFrequency === "WEEK" ? "week" : "month")}`}
-                value={rewardCycles}
-                min={1}
-                max={12}
-                step={1}
-                onChange={(value) => setRewardCycles(value as number)}
-                output
-              />
+        <BlockStack gap="400">
+          {/* Reward type selector */}
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingLg">Choose reward type</Text>
               <Text as="p" tone="subdued">
-                The discount applies for this many months after you approve their submission.
+                Select how you want to reward customers for their content submissions.
               </Text>
+
+              <BlockStack gap="300">
+                {/* Discount code option - always available */}
+                <div
+                  onClick={() => setRewardType("DISCOUNT_CODE")}
+                  style={{
+                    padding: "16px",
+                    border: `2px solid ${rewardType === "DISCOUNT_CODE" ? "#1a1a1a" : "#e5e7eb"}`,
+                    borderRadius: "12px",
+                    cursor: "pointer",
+                    background: rewardType === "DISCOUNT_CODE" ? "#f9fafb" : "#fff",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <div style={{
+                      width: 20, height: 20, borderRadius: "50%",
+                      border: `2px solid ${rewardType === "DISCOUNT_CODE" ? "#1a1a1a" : "#d1d5db"}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      marginTop: 2, flexShrink: 0,
+                    }}>
+                      {rewardType === "DISCOUNT_CODE" && (
+                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#1a1a1a" }} />
+                      )}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">Discount code</Text>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        Generate a unique discount code for the customer to use on their next order at your store.
+                      </Text>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Subscription discount option - conditionally available */}
+                <div
+                  onClick={() => {
+                    if (hasSellingPlan && providerConnected) setRewardType("SUBSCRIPTION_DISCOUNT");
+                  }}
+                  style={{
+                    padding: "16px",
+                    border: `2px solid ${rewardType === "SUBSCRIPTION_DISCOUNT" ? "#1a1a1a" : "#e5e7eb"}`,
+                    borderRadius: "12px",
+                    cursor: hasSellingPlan && providerConnected ? "pointer" : "not-allowed",
+                    background: rewardType === "SUBSCRIPTION_DISCOUNT" ? "#f9fafb" : "#fff",
+                    opacity: hasSellingPlan && providerConnected ? 1 : 0.6,
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <div style={{
+                      width: 20, height: 20, borderRadius: "50%",
+                      border: `2px solid ${rewardType === "SUBSCRIPTION_DISCOUNT" ? "#1a1a1a" : "#d1d5db"}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      marginTop: 2, flexShrink: 0,
+                    }}>
+                      {rewardType === "SUBSCRIPTION_DISCOUNT" && (
+                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#1a1a1a" }} />
+                      )}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">Subscription discount</Text>
+                        {!(hasSellingPlan && providerConnected) && <Badge tone="info">Unavailable</Badge>}
+                      </div>
+                      {hasSellingPlan && providerConnected ? (
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          Apply a discount to the customer's subscription payments (free months, percentage off, etc).
+                        </Text>
+                      ) : (
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {!hasSellingPlan
+                            ? "No subscription plan detected for this product. Connect your provider in "
+                            : "Connect your subscription provider in "}
+                          <Link to="/app/settings">Settings</Link>
+                          {" to enable this option."}
+                        </Text>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </BlockStack>
             </BlockStack>
+          </Card>
 
-            <Divider />
+          {/* Reward configuration based on type */}
+          {rewardType === "DISCOUNT_CODE" ? (
+            <Card>
+              <BlockStack gap="500">
+                <Text as="h2" variant="headingLg">Configure discount code</Text>
 
-            {/* Limits */}
+                {/* Discount code type selector */}
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">Discount type</Text>
+                  <ButtonGroup variant="segmented">
+                    <Button pressed={discountCodeType === "PERCENTAGE"} onClick={() => setDiscountCodeType("PERCENTAGE")}>
+                      % off
+                    </Button>
+                    <Button pressed={discountCodeType === "FIXED_AMOUNT"} onClick={() => setDiscountCodeType("FIXED_AMOUNT")}>
+                      $ amount off
+                    </Button>
+                  </ButtonGroup>
+                </BlockStack>
+
+                <TextField
+                  label={discountCodeType === "PERCENTAGE" ? "Percentage off" : "Amount off ($)"}
+                  type="number"
+                  value={discountCodeAmount}
+                  onChange={setDiscountCodeAmount}
+                  placeholder={discountCodeType === "PERCENTAGE" ? "e.g. 20" : "e.g. 15"}
+                  prefix={discountCodeType === "FIXED_AMOUNT" ? "$" : undefined}
+                  suffix={discountCodeType === "PERCENTAGE" ? "%" : undefined}
+                  min={1}
+                  max={discountCodeType === "PERCENTAGE" ? 100 : undefined}
+                  autoComplete="off"
+                />
+
+                <Divider />
+
+                <TextField
+                  label="Code expiry (optional)"
+                  type="number"
+                  value={discountCodeExpiryDays}
+                  onChange={setDiscountCodeExpiryDays}
+                  placeholder="e.g. 30"
+                  helpText="How many days the customer has to use their code after approval. Leave blank for no expiry."
+                  min={1}
+                  autoComplete="off"
+                />
+
+                <TextField
+                  label="Minimum order amount (optional)"
+                  type="number"
+                  value={discountCodeMinOrder}
+                  onChange={setDiscountCodeMinOrder}
+                  placeholder="e.g. 50"
+                  prefix="$"
+                  helpText="Minimum order subtotal required to use the code. Leave blank for no minimum."
+                  min={0}
+                  autoComplete="off"
+                />
+              </BlockStack>
+            </Card>
+          ) : (
+            <Card>
+              <BlockStack gap="500">
+                <Text as="h2" variant="headingLg">Configure subscription discount</Text>
+
+                {/* Discount type selector */}
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">Discount type</Text>
+                  <ButtonGroup variant="segmented">
+                    <Button pressed={discountType === "FREE"} onClick={() => { setDiscountType("FREE"); setDiscountValue(""); }}>
+                      Free
+                    </Button>
+                    <Button pressed={discountType === "FIXED_AMOUNT"} onClick={() => setDiscountType("FIXED_AMOUNT")}>
+                      $ amount off
+                    </Button>
+                    <Button pressed={discountType === "PERCENTAGE"} onClick={() => setDiscountType("PERCENTAGE")}>
+                      % off
+                    </Button>
+                  </ButtonGroup>
+                </BlockStack>
+
+                {/* Discount value (only for non-free) */}
+                {discountType !== "FREE" && (
+                  <TextField
+                    label={discountType === "FIXED_AMOUNT" ? `Amount off per ${rewardFrequency === "DAY" ? "day" : rewardFrequency === "WEEK" ? "week" : "month"} ($)` : "Percentage off"}
+                    type="number"
+                    value={discountValue}
+                    onChange={setDiscountValue}
+                    placeholder={discountType === "FIXED_AMOUNT" ? "e.g. 10" : "e.g. 50"}
+                    prefix={discountType === "FIXED_AMOUNT" ? "$" : undefined}
+                    suffix={discountType === "PERCENTAGE" ? "%" : undefined}
+                    min={1}
+                    max={discountType === "PERCENTAGE" ? 100 : undefined}
+                    autoComplete="off"
+                  />
+                )}
+
+                {/* Duration */}
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">Duration</Text>
+                  <RangeSlider
+                    label={`${rewardCycles} ${rewardCycles !== 1 ? (rewardFrequency === "DAY" ? "days" : rewardFrequency === "WEEK" ? "weeks" : "months") : (rewardFrequency === "DAY" ? "day" : rewardFrequency === "WEEK" ? "week" : "month")}`}
+                    value={rewardCycles}
+                    min={1}
+                    max={12}
+                    step={1}
+                    onChange={(value) => setRewardCycles(value as number)}
+                    output
+                  />
+                  <Text as="p" tone="subdued">
+                    The discount applies for this many months after you approve their submission.
+                  </Text>
+                </BlockStack>
+              </BlockStack>
+            </Card>
+          )}
+
+          {/* Limits - shared for both reward types */}
+          <Card>
             <BlockStack gap="300">
               <Text as="h3" variant="headingMd">Limits</Text>
               <Checkbox
@@ -722,8 +958,8 @@ export default function NewCampaignWizard() {
                 </FormLayout>
               )}
             </BlockStack>
-          </BlockStack>
-        </Card>
+          </Card>
+        </BlockStack>
       </Layout.Section>
 
       <Layout.Section variant="oneThird">
@@ -732,42 +968,68 @@ export default function NewCampaignWizard() {
             <Text as="h3" variant="headingMd">Reward summary</Text>
             <Divider />
             <InlineStack align="space-between">
-              <Text as="span" tone="subdued">Type</Text>
-              <Text as="span" fontWeight="bold">
-                {discountType === "FREE" ? "Free" : discountType === "FIXED_AMOUNT" ? "Fixed amount" : "Percentage"}
-              </Text>
+              <Text as="span" tone="subdued">Reward type</Text>
+              <Badge>{rewardType === "DISCOUNT_CODE" ? "Discount code" : "Subscription discount"}</Badge>
             </InlineStack>
-            {discountType !== "FREE" && discountValue && (
-              <InlineStack align="space-between">
-                <Text as="span" tone="subdued">Discount</Text>
-                <Text as="span" fontWeight="bold">
-                  {discountType === "FIXED_AMOUNT" ? `$${discountValue}/mo` : `${discountValue}%`}
-                </Text>
-              </InlineStack>
+
+            {rewardType === "DISCOUNT_CODE" ? (
+              <>
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">Discount</Text>
+                  <Text as="span" fontWeight="bold">
+                    {discountCodeAmount
+                      ? (discountCodeType === "PERCENTAGE" ? `${discountCodeAmount}%` : `$${discountCodeAmount}`)
+                      : "—"}
+                  </Text>
+                </InlineStack>
+                {discountCodeExpiryDays && (
+                  <InlineStack align="space-between">
+                    <Text as="span" tone="subdued">Expires</Text>
+                    <Text as="span">{discountCodeExpiryDays} days</Text>
+                  </InlineStack>
+                )}
+                {discountCodeMinOrder && (
+                  <InlineStack align="space-between">
+                    <Text as="span" tone="subdued">Min. order</Text>
+                    <Text as="span">${discountCodeMinOrder}</Text>
+                  </InlineStack>
+                )}
+              </>
+            ) : (
+              <>
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">Type</Text>
+                  <Text as="span" fontWeight="bold">
+                    {discountType === "FREE" ? "Free" : discountType === "FIXED_AMOUNT" ? "Fixed amount" : "Percentage"}
+                  </Text>
+                </InlineStack>
+                {discountType !== "FREE" && discountValue && (
+                  <InlineStack align="space-between">
+                    <Text as="span" tone="subdued">Discount</Text>
+                    <Text as="span" fontWeight="bold">
+                      {discountType === "FIXED_AMOUNT" ? `$${discountValue}/mo` : `${discountValue}%`}
+                    </Text>
+                  </InlineStack>
+                )}
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">Duration</Text>
+                  <Text as="span" fontWeight="bold">
+                    {formatSubscriptionReward(discountType, discountValue, rewardCycles, rewardFrequency)}
+                  </Text>
+                </InlineStack>
+              </>
             )}
-            <InlineStack align="space-between">
-              <Text as="span" tone="subdued">Duration</Text>
-              <Text as="span" fontWeight="bold">{rewardLabel}</Text>
-            </InlineStack>
+
             <Divider />
             <InlineStack align="space-between">
               <Text as="span" tone="subdued">Per submission</Text>
               <Badge tone="success">{rewardLabel}</Badge>
             </InlineStack>
             {hasMaxSubmissions && maxSubmissions && (
-              <>
-                <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Max submissions</Text>
-                  <Text as="span">{maxSubmissions}</Text>
-                </InlineStack>
-                <Divider />
-                <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Max reward cycles</Text>
-                  <Text as="span" fontWeight="bold">
-                    {parseInt(maxSubmissions) * rewardCycles} cycles total
-                  </Text>
-                </InlineStack>
-              </>
+              <InlineStack align="space-between">
+                <Text as="span" tone="subdued">Max submissions</Text>
+                <Text as="span">{maxSubmissions}</Text>
+              </InlineStack>
             )}
             {hasDateRange && startDate && endDate && (
               <InlineStack align="space-between">
@@ -946,6 +1208,10 @@ export default function NewCampaignWizard() {
               <BlockStack gap="200">
                 <Text as="h3" variant="headingMd">Reward</Text>
                 <Divider />
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">Type</Text>
+                  <Badge>{rewardType === "DISCOUNT_CODE" ? "Discount code" : "Subscription discount"}</Badge>
+                </InlineStack>
                 <InlineStack align="space-between">
                   <Text as="span" tone="subdued">Per submission</Text>
                   <Badge tone="success">{rewardLabel}</Badge>
