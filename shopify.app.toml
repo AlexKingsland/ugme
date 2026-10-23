@@ -6,7 +6,7 @@ application_url = "https://localhost:3458"
 embedded = true
 
 [access_scopes]
-scopes = "read_customers"
+scopes = "read_customers,write_metaobjects"
 
 [webhooks]
 api_version = "2026-10"
@@ -22,3 +22,28 @@ automatically_update_urls_on_dev = true
 url = "https://localhost:3458/api/proxy"
 subpath = "ugme"
 prefix = "apps"
+
+# ── Social Wall ──────────────────────────────────────────────────
+# App-owned metaobject mirroring each campaign, so merchants can pick campaigns
+# from a list in the "Social Wall" theme block. Entries are written by
+# app/utils/canvas.server.ts (syncCampaignMetaobjects).
+[metaobjects.app.ugme_campaign]
+name = "UGME campaign"
+description = "A UGME content campaign, selectable in the Social Wall theme block"
+display_name_field = "title"
+access.admin = "merchant_read"
+access.storefront = "public_read"
+
+[metaobjects.app.ugme_campaign.fields.title]
+name = "Title"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.ugme_campaign.fields.campaign_id]
+name = "Campaign ID"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.ugme_campaign.fields.status]
+name = "Status"
+type = "single_line_text_field"

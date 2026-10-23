@@ -6,6 +6,7 @@ import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, get
 import { verifyActiveSubscriber, getRechargeCustomer, getActiveSubscriptionsForProduct, applyRewardToNextCharge } from "../utils/recharge.server";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { checkRewardGating } from "../utils/reward-gating.server";
+import { canvasJsonResponse } from "../utils/canvas.server";
 
 /**
  * App Proxy catch-all route.
@@ -17,6 +18,7 @@ import { checkRewardGating } from "../utils/reward-gating.server";
  *   /apps/ugme/campaign/:id/submit      → upload & submit (C9) — requires auth
  *   /apps/ugme/campaign/:id/submitted   → confirmation (C10) — requires auth
  *   /apps/ugme/account                  → my submissions (C11) — requires auth
+ *   /apps/ugme/canvas?campaigns=a,b     → JSON media for the Social Wall theme block
  */
 
 type ShopInfo = {
@@ -212,6 +214,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if ("error" in resolved) return resolved.error;
   const { shop, brandName, loggedInCustomerId, proxyPath, url } = resolved;
 
+  // Route: /canvas — JSON for the Social Wall theme block (public, no login)
+  if (proxyPath === "canvas") {
+    return canvasJsonResponse(shop.id, url);
+  }
 
   // Route: /campaign/:id/submitted
   const submittedMatch = proxyPath.match(/^campaign\/([^/]+)\/submitted$/);

@@ -1,0 +1,26 @@
+{
+  "name": "@ugme/canvas",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "UGME Social Wall — storefront bundle for the ugme-canvas theme app extension. Based on edoardolunardi/infinite-canvas (MIT).",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-three/fiber": "9.4.2",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "three": "0.182.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.182.0",
+    "@vitejs/plugin-react": "5.1.2",
+    "typescript": "5.9.3",
+    "vite": "7.2.7"
+  }
+}

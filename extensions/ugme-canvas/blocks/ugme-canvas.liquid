@@ -1,0 +1,135 @@
+{%- comment -%}
+  Social Wall — an infinite, explorable 3D wall of approved customer content.
+  Campaigns are app-owned metaobjects that UGME syncs automatically, so the
+  merchant just picks them from the list in the block settings.
+{%- endcomment -%}
+
+{%- liquid
+  assign campaign_ids = ''
+  for c in block.settings.campaigns
+    assign campaign_ids = campaign_ids | append: c.campaign_id.value | append: ','
+  endfor
+  assign height = block.settings.height | append: 'vh'
+  if block.settings.height_mobile
+    assign height_mobile = block.settings.height_mobile | append: 'vh'
+  else
+    assign height_mobile = height
+  endif
+-%}
+
+<div
+  id="ugme-canvas-{{ block.id }}"
+  class="ugme-canvas-block"
+  data-ugme-canvas
+  data-endpoint="/apps/ugme/canvas"
+  data-campaigns="{{ campaign_ids }}"
+  data-background="{{ block.settings.background }}"
+  data-show-hint="{{ block.settings.show_hint }}"
+  data-design-mode="{{ request.design_mode }}"
+  data-bundle="{{ 'ugme-canvas.js' | asset_url }}"
+  aria-label="{{ block.settings.heading | default: 'Customer content' | escape }}"
+  role="region"
+>
+  {%- comment -%} Not empty on purpose: themes like Dawn hide `div:empty`, which would stop the canvas from ever loading. {%- endcomment -%}
+  <span class="ugme-canvas-block__boot" aria-hidden="true"></span>
+</div>
+
+<style>
+  #ugme-canvas-{{ block.id }} {
+    display: block !important;
+    position: relative;
+    --ugme-canvas-height: {{ height }};
+    --ugme-canvas-bg: {{ block.settings.background }};
+    background: {{ block.settings.background }};
+    {%- if block.settings.full_width %}
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    {%- endif %}
+    height: var(--ugme-canvas-height);
+    min-height: 320px;
+    border-radius: {{ block.settings.corner_radius }}px;
+    overflow: hidden;
+  }
+  @media screen and (max-width: 749px) {
+    #ugme-canvas-{{ block.id }} { --ugme-canvas-height: {{ height_mobile }}; }
+  }
+</style>
+
+{% schema %}
+{
+  "name": "Social Wall",
+  "target": "section",
+  "javascript": "ugme-canvas-loader.js",
+  "settings": [
+    {
+      "type": "metaobject_list",
+      "id": "campaigns",
+      "label": "Campaigns",
+      "metaobject_type": "app--425610215425--ugme_campaign",
+      "info": "Approved content from these UGME campaigns is shown. Leave empty to show all active campaigns."
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Accessible label",
+      "default": "Customer content"
+    },
+    {
+      "type": "header",
+      "content": "Layout"
+    },
+    {
+      "type": "range",
+      "id": "height",
+      "label": "Height (desktop)",
+      "min": 40,
+      "max": 100,
+      "step": 5,
+      "unit": "vh",
+      "default": 80
+    },
+    {
+      "type": "range",
+      "id": "height_mobile",
+      "label": "Height (mobile)",
+      "min": 40,
+      "max": 100,
+      "step": 5,
+      "unit": "vh",
+      "default": 70
+    },
+    {
+      "type": "checkbox",
+      "id": "full_width",
+      "label": "Full width",
+      "default": true
+    },
+    {
+      "type": "range",
+      "id": "corner_radius",
+      "label": "Corner radius",
+      "min": 0,
+      "max": 32,
+      "step": 2,
+      "unit": "px",
+      "default": 0
+    },
+    {
+      "type": "header",
+      "content": "Style"
+    },
+    {
+      "type": "color",
+      "id": "background",
+      "label": "Background",
+      "default": "#ffffff"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_hint",
+      "label": "Show “drag to explore” hint",
+      "default": true
+    }
+  ]
+}
+{% endschema %}

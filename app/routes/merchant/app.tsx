@@ -7,11 +7,12 @@ import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
+import { maybeSyncCampaignMetaobjects } from "../../utils/canvas.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
 
   // Auto-provision Shop record on first visit
   await prisma.shop.upsert({
@@ -22,6 +23,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       accessToken: session.accessToken ?? "",
     },
   });
+
+  // Keep campaigns pickable in the theme editor's Social Wall block (throttled, non-blocking)
+  maybeSyncCampaignMetaobjects(admin.graphql, session.shop);
 
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
@@ -37,6 +41,7 @@ export default function App() {
         </Link>
         <Link to="/app/campaigns">Campaigns</Link>
         <Link to="/app/library">Library</Link>
+        <Link to="/app/social-wall">Social Wall</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />

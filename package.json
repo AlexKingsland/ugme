@@ -16,7 +16,12 @@
     "shopify": "shopify",
     "prisma": "prisma",
     "graphql-codegen": "graphql-codegen",
-    "vite": "vite"
+    "vite": "vite",
+    "canvas:install": "npm --prefix packages/canvas install",
+    "canvas:dev": "npm --prefix packages/canvas run dev",
+    "canvas:build": "npm --prefix packages/canvas run build",
+    "canvas:set-app-id": "node scripts/set-canvas-app-id.mjs",
+    "r2:cors": "node --env-file=.env --import tsx scripts/r2-cors.ts"
   },
   "type": "module",
   "engines": {

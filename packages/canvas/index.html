@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UGME Canvas — playground</title>
+    <style>
+      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f4f2; color: #111; }
+      header, footer { padding: 28px 24px; max-width: 900px; margin: 0 auto; }
+      header h1 { margin: 0 0 6px; font-size: 22px; }
+      header p { margin: 0; color: #666; font-size: 14px; }
+      footer { color: #888; font-size: 13px; height: 60vh; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>UGME Canvas playground</h1>
+      <p>Simulates the theme block on a storefront page. Sample media from <code>public/sample</code>; add <code>?endpoint=…</code> to hit a real proxy endpoint.</p>
+    </header>
+    <div id="canvas" style="--ugme-canvas-height: 78vh"></div>
+    <footer>Rest of the store page…</footer>
+    <script type="module" src="/dev/main.tsx"></script>
+  </body>
+</html>

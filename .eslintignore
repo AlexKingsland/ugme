@@ -4,3 +4,5 @@ public/build
 shopify-app-remix
 */*.yml
 .shopify
+packages
+extensions/*/assets
