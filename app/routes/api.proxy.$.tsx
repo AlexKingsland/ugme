@@ -2,7 +2,8 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import prisma from "../db.server";
 import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
-import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl } from "../utils/r2.server";
+import crypto from "crypto";
+import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl, getPresignedUploadUrl, headObject, createMultipartUpload, getPresignedPartUrl, completeMultipartUpload, abortMultipartUpload } from "../utils/r2.server";
 import { verifyActiveSubscriber, getRechargeCustomer, getActiveSubscriptionsForProduct, applyRewardToNextCharge } from "../utils/recharge.server";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { checkRewardGating } from "../utils/reward-gating.server";
@@ -17,6 +18,8 @@ import { canvasJsonResponse } from "../utils/canvas.server";
  *   /apps/ugme/campaign/:id             → campaign detail (C3)
  *   /apps/ugme/campaign/:id/submit      → upload & submit (C9) — requires auth
  *   /apps/ugme/campaign/:id/submitted   → confirmation (C10) — requires auth
+ *   POST /apps/ugme/campaign/:id/upload-url → presigned R2 PUT for direct browser upload (JSON)
+ *   POST /apps/ugme/campaign/:id/complete   → confirm upload landed + create submission (JSON)
  *   /apps/ugme/account                  → my submissions (C11) — requires auth
  *   /apps/ugme/canvas?campaigns=a,b     → JSON media for the Social Wall theme block
  */
@@ -263,7 +266,28 @@ export async function action({ request }: ActionFunctionArgs) {
   if ("error" in resolved) return resolved.error;
   const { shop, brandName, loggedInCustomerId, proxyPath, url } = resolved;
 
-  // POST /campaign/:id/submit — process the submission
+  // POST /campaign/:id/upload-url — direct browser → R2 upload, step 1 (JSON)
+  const uploadUrlMatch = proxyPath.match(/^campaign\/([^/]+)\/upload-url$/);
+  if (uploadUrlMatch && request.method === "POST") {
+    if (!loggedInCustomerId) return uploadJson({ error: "Please log in to submit." }, 401);
+    return handleUploadUrl(uploadUrlMatch[1], shop, loggedInCustomerId, request);
+  }
+
+  // POST /campaign/:id/upload-abort — clean up a failed multipart upload (JSON)
+  const abortMatch = proxyPath.match(/^campaign\/([^/]+)\/upload-abort$/);
+  if (abortMatch && request.method === "POST") {
+    if (!loggedInCustomerId) return uploadJson({ error: "Please log in to submit." }, 401);
+    return handleUploadAbort(abortMatch[1], shop, loggedInCustomerId, request);
+  }
+
+  // POST /campaign/:id/complete — direct upload, step 2: verify + create submission (JSON)
+  const completeMatch = proxyPath.match(/^campaign\/([^/]+)\/complete$/);
+  if (completeMatch && request.method === "POST") {
+    if (!loggedInCustomerId) return uploadJson({ error: "Please log in to submit." }, 401);
+    return handleUploadComplete(completeMatch[1], shop, loggedInCustomerId, request);
+  }
+
+  // POST /campaign/:id/submit — process the submission (legacy multipart; fallback path)
   const submitMatch = proxyPath.match(/^campaign\/([^/]+)\/submit$/);
   if (submitMatch && request.method === "POST") {
     if (!loggedInCustomerId) {
@@ -676,7 +700,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   if (errorParam) {
     const errorMsgs: Record<string, string> = {
       no_file: "Please select a file to upload.",
-      too_large: "File is too large. Maximum size is 100 MB.",
+      too_large: "File is too large. Maximum size is 1 GB.",
       upload_failed: "Upload failed. Please try again.",
       plan_limit: "Submission limit reached. The store\u2019s current plan cannot accept more submissions right now.",
     };
@@ -705,7 +729,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
           Tap to choose your ${mediaWord}
         </div>
         <div id="uploadHint" style="color: var(--ugme-muted); font-size: 13px;">
-          ${isVideo ? "MP4 or MOV, max 100 MB" : "JPG or PNG, max 100 MB"}
+          ${isVideo ? "MP4 or MOV, max 1 GB" : "JPG or PNG, max 1 GB"}
         </div>
         <input type="file" id="fileInput" name="file" accept="${isVideo ? "video/mp4,video/quicktime,video/*" : "image/jpeg,image/png,image/*"}" style="display: none;" required />
       </div>
@@ -725,13 +749,16 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       <!-- Upload progress (hidden until uploading) -->
       <div id="uploadProgress" style="display: none; margin-bottom: 20px;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-          <span style="font-size: 14px; font-weight: 600;">Uploading…</span>
+          <span id="progressLabel" style="font-size: 14px; font-weight: 600;">Uploading…</span>
           <span id="progressPercent" style="font-size: 14px; color: var(--ugme-muted);">0%</span>
         </div>
         <div class="ugme-progress-bar">
           <div id="progressFill" class="ugme-progress-fill" style="width: 0%;"></div>
         </div>
+        <div id="progressDetail" style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; color: var(--ugme-muted);"><span id="progressBytes"></span><span id="progressEta"></span></div>
+        <p style="margin-top: 10px; font-size: 13px; color: var(--ugme-muted);">Keep this page open until the upload finishes.</p>
       </div>
+      <div id="uploadError" style="display: none; background: #fef2f2; color: #991b1b; padding: 14px 16px; border-radius: var(--ugme-radius); margin-bottom: 20px; font-size: 14px;"></div>
 
       ${
         requirements.length > 0
@@ -867,13 +894,261 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         }
       });
 
-      // Form submission — for now, submit as multipart/form-data
-      // Later: upload to R2 first, then POST content URL
+      // ── Upload: browser → R2 directly, with real progress ──────────
+      // 1) ask the app for a presigned URL, 2) PUT the file straight to R2,
+      // 3) tell the app it landed. Falls back to the old multipart submit if
+      // the direct upload can't start (e.g. bucket CORS not configured).
+      const progressBox = document.getElementById('uploadProgress');
+      const progressLabel = document.getElementById('progressLabel');
+      const progressPercent = document.getElementById('progressPercent');
+      const progressFill = document.getElementById('progressFill');
+      const progressBytes = document.getElementById('progressBytes');
+      const progressEta = document.getElementById('progressEta');
+      const uploadError = document.getElementById('uploadError');
+      const actionUrl = form.getAttribute('action');
+      const qIndex = actionUrl.indexOf('?');
+      const actionPath = qIndex >= 0 ? actionUrl.slice(0, qIndex) : actionUrl;
+      const actionQuery = qIndex >= 0 ? actionUrl.slice(qIndex) : '';
+      const stepUrl = function(step) { return actionPath.replace(/submit$/, step) + actionQuery; };
+      let busy = false;
+      let wakeLock = null;
+
+      function guardUnload(e) { e.preventDefault(); e.returnValue = ''; return ''; }
+
+      function setBusy(on) {
+        busy = on;
+        submitBtn.disabled = on;
+        submitBtn.style.opacity = on ? '0.7' : '1';
+        submitBtn.style.cursor = on ? 'progress' : 'pointer';
+        removeFile.style.display = on ? 'none' : '';
+        if (on) {
+          window.addEventListener('beforeunload', guardUnload);
+          if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function(l) { wakeLock = l; }).catch(function() {});
+        } else {
+          window.removeEventListener('beforeunload', guardUnload);
+          if (wakeLock) { wakeLock.release().catch(function() {}); wakeLock = null; }
+        }
+      }
+
+      function fmtEta(sec) {
+        if (!isFinite(sec) || sec <= 0) return '';
+        if (sec < 60) return 'about ' + Math.max(1, Math.round(sec)) + 's left';
+        return 'about ' + Math.round(sec / 60) + ' min left';
+      }
+
+      function showProgress(label, pct, loaded, total, eta) {
+        progressBox.style.display = 'block';
+        uploadError.style.display = 'none';
+        progressLabel.textContent = label;
+        if (pct == null) {
+          progressPercent.textContent = '';
+          progressFill.style.width = '100%';
+          progressFill.style.opacity = '0.5';
+        } else {
+          progressPercent.textContent = Math.floor(pct) + '%';
+          progressFill.style.width = pct + '%';
+          progressFill.style.opacity = '1';
+        }
+        progressBytes.textContent = total ? formatBytes(loaded) + ' of ' + formatBytes(total) : '';
+        progressEta.textContent = eta || '';
+      }
+
+      function fail(msg) {
+        setBusy(false);
+        progressBox.style.display = 'none';
+        uploadError.textContent = msg || 'Upload failed. Please try again.';
+        uploadError.style.display = 'block';
+        submitBtn.textContent = 'Try again';
+        uploadError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      function nativeFallback() {
+        // Old path: multipart POST through the app proxy (no progress available).
+        form.dataset.native = '1';
+        showProgress('Uploading… this can take a few minutes for large videos', null, 0, 0, '');
+        window.removeEventListener('beforeunload', guardUnload);
+        HTMLFormElement.prototype.submit.call(form);
+      }
+
+      function postJson(url, data) {
+        return fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(data),
+        }).then(function(res) {
+          return res.json().catch(function() { return {}; }).then(function(json) { return { ok: res.ok, json: json }; });
+        });
+      }
+
+      const MAX_BYTES = 1024 * 1024 * 1024; // 1 GB
+      const LEGACY_MAX_BYTES = 100 * 1024 * 1024; // old proxy path limit
+
+      // Single PUT of a Blob with progress. Resolves with the response ETag.
+      function putBlob(url, blob, contentType, onProgress, register) {
+        return new Promise(function(resolve, reject) {
+          const xhr = new XMLHttpRequest();
+          if (register) register(xhr);
+          xhr.open('PUT', url);
+          if (contentType) xhr.setRequestHeader('Content-Type', contentType);
+          xhr.upload.onprogress = function(e) { if (e.lengthComputable) onProgress(e.loaded); };
+          xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.getResponseHeader('ETag'));
+            else reject({ status: xhr.status });
+          };
+          xhr.onerror = function() { reject({ status: 0 }); };
+          xhr.onabort = function() { reject({ status: -1 }); };
+          xhr.send(blob);
+        });
+      }
+
+      function makeProgress(file) {
+        const started = Date.now();
+        let rate = 0, lastT = started, lastLoaded = 0;
+        const word = file.type.indexOf('video') === 0 ? 'video' : 'photo';
+        return function(loaded) {
+          const now = Date.now();
+          const dt = (now - lastT) / 1000;
+          if (dt > 0.5) {
+            const inst = (loaded - lastLoaded) / dt;
+            rate = rate ? rate * 0.7 + inst * 0.3 : inst;
+            lastT = now; lastLoaded = loaded;
+          }
+          const pct = Math.min(99.5, (loaded / file.size) * 100);
+          showProgress('Uploading your ' + word + '…', pct, loaded, file.size, rate > 0 ? fmtEta((file.size - loaded) / rate) : '');
+        };
+      }
+
+      // Large files: R2 multipart — 16 MB parts, 4 in parallel, each retried up to 4 times.
+      async function uploadMultipart(ticket, file) {
+        const report = makeProgress(file);
+        const partLoaded = new Array(ticket.partUrls.length).fill(0);
+        const etags = new Array(ticket.partUrls.length);
+        const sum = function() { return partLoaded.reduce(function(a, b) { return a + b; }, 0); };
+        let next = 0, anyStarted = false;
+
+        async function sendPart(i) {
+          const start = i * ticket.partSize;
+          const blob = file.slice(start, Math.min(start + ticket.partSize, file.size));
+          for (let attempt = 0; ; attempt++) {
+            try {
+              const etag = await putBlob(ticket.partUrls[i], blob, null, function(loaded) {
+                partLoaded[i] = loaded; anyStarted = anyStarted || loaded > 0; report(sum());
+              });
+              if (!etag) throw { status: 0, noEtag: true };
+              etags[i] = etag;
+              partLoaded[i] = blob.size; report(sum());
+              return;
+            } catch (err) {
+              partLoaded[i] = 0;
+              if (err && err.noEtag) throw err; // CORS ExposeHeaders missing — retrying won't help
+              if (attempt >= 3) throw err;
+              showProgress('Connection hiccup — retrying…', (sum() / file.size) * 100, sum(), file.size, '');
+              await new Promise(function(r) { setTimeout(r, 1000 * Math.pow(2, attempt)); });
+            }
+          }
+        }
+
+        async function worker() {
+          while (next < ticket.partUrls.length) {
+            const i = next++;
+            await sendPart(i);
+          }
+        }
+
+        try {
+          await Promise.all([worker(), worker(), worker(), worker()]);
+        } catch (err) {
+          postJson(stepUrl('upload-abort'), { key: ticket.key, uploadId: ticket.uploadId, token: ticket.token, expires: ticket.expires }).catch(function() {});
+          err = err || {}; err.started = anyStarted; throw err;
+        }
+        return etags.map(function(etag, i) { return { PartNumber: i + 1, ETag: etag }; });
+      }
+
+      async function directUpload() {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        if (file.size > MAX_BYTES) return fail('File is too large. Maximum size is 1 GB.');
+        setBusy(true);
+        submitBtn.textContent = 'Uploading…';
+        showProgress('Preparing upload…', 0, 0, file.size, '');
+
+        let ticket;
+        try {
+          const r = await postJson(stepUrl('upload-url'), { fileName: file.name, fileType: file.type, fileSize: file.size });
+          if (r.json.redirect) { setBusy(false); window.location.href = r.json.redirect; return; }
+          if (!r.ok) return fail(r.json.error);
+          ticket = r.json;
+        } catch (err) {
+          return file.size <= LEGACY_MAX_BYTES ? nativeFallback() : fail('Upload couldn\u2019t start. Please try again.');
+        }
+
+        let parts = null;
+        try {
+          if (ticket.mode === 'multipart') {
+            parts = await uploadMultipart(ticket, file);
+          } else {
+            const report = makeProgress(file);
+            await putBlob(ticket.uploadUrl, file, ticket.contentType, report).catch(function(err) {
+              err = err || {}; err.started = true; throw err;
+            });
+          }
+        } catch (err) {
+          // Couldn't reach storage at all (e.g. bucket CORS not set) → old path for small files.
+          if (err && err.status === 0 && !err.started && file.size <= LEGACY_MAX_BYTES) return nativeFallback();
+          return fail('Upload interrupted. Check your connection and try again.');
+        }
+
+        showProgress('Finishing up…', 100, file.size, file.size, '');
+        const fields = new FormData(form);
+        try {
+          const r = await postJson(stepUrl('complete'), {
+            key: ticket.key,
+            uploadId: ticket.uploadId || '',
+            parts: parts,
+            token: ticket.token,
+            expires: ticket.expires,
+            message: fields.get('message') || '',
+            subscriptionId: fields.get('subscriptionId') || '',
+          });
+          if (r.json.redirect) {
+            setBusy(false);
+            submitBtn.textContent = 'Submitted ✓';
+            window.location.href = r.json.redirect;
+            return;
+          }
+          return fail(r.json.error);
+        } catch (err) {
+          return fail('We couldn\u2019t confirm your upload. Please try again.');
+        }
+      }
+
+      // Large file on mobile data? Give a heads-up before they start.
+      fileInput.addEventListener('change', function() {
+        const f = this.files && this.files[0];
+        const hint = document.getElementById('sizeHint');
+        if (hint) hint.remove();
+        if (!f) return;
+        if (f.size > MAX_BYTES) {
+          fail('This file is ' + formatBytes(f.size) + '. The maximum is 1 GB \u2014 try trimming the video.');
+          submitBtn.disabled = true;
+          return;
+        }
+        if (f.size > 200 * 1024 * 1024) {
+          const p = document.createElement('p');
+          p.id = 'sizeHint';
+          p.style.cssText = 'margin: -8px 0 16px; font-size: 13px; color: var(--ugme-muted);';
+          p.textContent = 'Large file (' + formatBytes(f.size) + '). Wi-Fi recommended \u2014 keep this page open while it uploads.';
+          filePreview.after(p);
+        }
+      });
+
       form.addEventListener('submit', function(e) {
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Submitting…';
-        submitBtn.style.opacity = '0.7';
-        // Let the form submit natively for now
+        if (form.dataset.native === '1') return; // fallback in progress
+        e.preventDefault();
+        if (busy) return;
+        if (!window.fetch || !window.XMLHttpRequest || !window.FormData) return nativeFallback();
+        directUpload();
       });
     })();
     </script>
@@ -885,7 +1160,12 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
 
 // ── C9 POST: Process submission ─────────────────────────────────
 
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
+// Direct-to-R2 uploads (browser → R2) handle up to 1 GB. The legacy multipart
+// path streams through the app proxy and buffers in memory, so it stays at 100 MB.
+const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1 GB
+const LEGACY_MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
+const MULTIPART_THRESHOLD = 64 * 1024 * 1024; // files above this upload in parts
+const PART_SIZE = 16 * 1024 * 1024; // 16 MB parts (1 GB → 64 parts)
 
 async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, request: Request) {
   const campaign = await prisma.campaign.findUnique({
@@ -967,7 +1247,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
     // Fail open — don't block submissions if the check errors
   }
 
-  if (file.size > MAX_UPLOAD_BYTES) {
+  if (file.size > LEGACY_MAX_UPLOAD_BYTES) {
     return errorRedirect(shop.shopDomain, campaignId, "too_large");
   }
 
@@ -1008,6 +1288,212 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
     status: 302,
     headers: { Location: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` },
   });
+}
+
+// ── Direct browser → R2 upload ──────────────────────────────────
+// The browser PUTs the file straight to R2 (with a real progress bar) instead of
+// streaming it through Shopify's app proxy → tunnel → this server → R2. The
+// legacy multipart /submit route above stays as an automatic fallback.
+
+const UPLOAD_ERRORS: Record<string, string> = {
+  no_file: "Please select a file to upload.",
+  too_large: "File is too large. Maximum size is 1 GB.",
+  wrong_type: "That file type isn't accepted for this campaign.",
+  upload_failed: "Upload failed. Please try again.",
+  plan_limit: "Submission limit reached. The store’s current plan cannot accept more submissions right now.",
+  no_subscription: "You need an active subscription to this product to submit.",
+  closed: "This campaign is no longer accepting submissions.",
+  expired: "Your upload session expired. Please try again.",
+};
+
+function uploadJson(data: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+function uploadError(reason: string, status = 400, extra: Record<string, unknown> = {}) {
+  return uploadJson({ error: UPLOAD_ERRORS[reason] || UPLOAD_ERRORS.upload_failed, reason, ...extra }, status);
+}
+
+function signUpload(parts: string[]): string {
+  const secret = process.env.SHOPIFY_API_SECRET || "ugme-dev-upload-secret";
+  return crypto.createHmac("sha256", secret).update(parts.join("|")).digest("hex");
+}
+
+/** Same checks as the multipart submit: campaign open, subscription (Recharge), one per customer. */
+async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInCustomerId: string) {
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true, rewardType: true },
+  });
+  if (!campaign || campaign.shopId !== shop.id || campaign.status !== "ACTIVE") {
+    return { ok: false as const, response: uploadError("closed", 409) };
+  }
+
+  const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
+
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId) {
+    try {
+      const rechargeCustomer = await getRechargeCustomer(loggedInCustomerId, shop.providerApiKey || undefined);
+      if (!rechargeCustomer) return { ok: false as const, response: uploadError("no_subscription", 403) };
+      const subs = await getActiveSubscriptionsForProduct(rechargeCustomer.id, campaign.productId, shop.providerApiKey || undefined);
+      if (subs.length === 0) return { ok: false as const, response: uploadError("no_subscription", 403) };
+    } catch (err) {
+      console.error("[UGME] Recharge check (direct upload) failed:", err);
+      // Fail open, same as the multipart path
+    }
+  }
+
+  const existing = await prisma.submission.findFirst({
+    where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
+    select: { id: true },
+  });
+  if (existing) {
+    return {
+      ok: false as const,
+      response: uploadJson({ redirect: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` }, 409),
+    };
+  }
+
+  return { ok: true as const, campaign, customer };
+}
+
+function verifyUploadToken(given: string, parts: string[]): boolean {
+  const expected = signUpload(parts);
+  return given.length === expected.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+}
+
+async function handleUploadAbort(campaignId: string, shop: ShopInfo, loggedInCustomerId: string, request: Request) {
+  try {
+    const body = (await request.json()) as { key?: string; uploadId?: string; token?: string; expires?: number };
+    const customer = await prisma.customer.findFirst({ where: { shopId: shop.id, shopifyCustomerId: loggedInCustomerId } });
+    const key = String(body.key || "");
+    const uploadId = String(body.uploadId || "");
+    if (customer && uploadId && verifyUploadToken(String(body.token || ""), [shop.id, campaignId, customer.id, key, uploadId, String(body.expires || 0)])) {
+      await abortMultipartUpload(key, uploadId);
+    }
+  } catch (err) {
+    console.warn("[UGME] abort multipart failed:", err);
+  }
+  return uploadJson({ ok: true });
+}
+
+async function handleUploadUrl(campaignId: string, shop: ShopInfo, loggedInCustomerId: string, request: Request) {
+  let body: { fileName?: string; fileType?: string; fileSize?: number };
+  try {
+    body = await request.json();
+  } catch {
+    return uploadError("upload_failed");
+  }
+  const fileName = String(body.fileName || "upload").slice(0, 200);
+  const fileType = String(body.fileType || "");
+  const fileSize = Number(body.fileSize || 0);
+
+  if (!fileSize) return uploadError("no_file");
+  if (fileSize > MAX_UPLOAD_BYTES) return uploadError("too_large", 413);
+
+  const pre = await preflightSubmission(campaignId, shop, loggedInCustomerId);
+  if (!pre.ok) return pre.response;
+
+  const wantVideo = pre.campaign.contentType === "VIDEO";
+  if (fileType && !fileType.startsWith(wantVideo ? "video/" : "image/")) return uploadError("wrong_type", 415);
+
+  try {
+    const gates = await checkPlanGates(shop.id, (shop.planTier as PlanTierKey) || "FREE", fileSize);
+    if (!gates.canAcceptSubmission) return uploadError("plan_limit", 402);
+  } catch (err) {
+    console.error("[UGME] Plan gate check failed:", err);
+  }
+
+  const folderId = crypto.randomUUID();
+  const key = buildObjectKey(shop.shopDomain, pre.campaign.title, folderId, fileName);
+  const contentType = fileType || "application/octet-stream";
+  const ttlSecs = 6 * 60 * 60; // 6h to finish (1 GB on a slow connection)
+  const expires = Date.now() + ttlSecs * 1000;
+
+  if (fileSize > MULTIPART_THRESHOLD) {
+    const uploadId = await createMultipartUpload(key, contentType);
+    const partCount = Math.ceil(fileSize / PART_SIZE);
+    const partUrls = await Promise.all(
+      Array.from({ length: partCount }, (_, i) => getPresignedPartUrl(key, uploadId, i + 1, ttlSecs)),
+    );
+    const token = signUpload([shop.id, campaignId, pre.customer.id, key, uploadId, String(expires)]);
+    return uploadJson({ mode: "multipart", key, uploadId, partSize: PART_SIZE, partUrls, contentType, expires, token });
+  }
+
+  const uploadUrl = await getPresignedUploadUrl(key, contentType, ttlSecs);
+  const token = signUpload([shop.id, campaignId, pre.customer.id, key, "", String(expires)]);
+  return uploadJson({ mode: "single", uploadUrl, key, uploadId: "", contentType, expires, token });
+}
+
+async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedInCustomerId: string, request: Request) {
+  let body: {
+    key?: string;
+    uploadId?: string;
+    parts?: { PartNumber: number; ETag: string }[];
+    token?: string;
+    expires?: number;
+    message?: string;
+    subscriptionId?: string;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return uploadError("upload_failed");
+  }
+  const key = String(body.key || "");
+  const uploadId = String(body.uploadId || "");
+  const expires = Number(body.expires || 0);
+
+  const pre = await preflightSubmission(campaignId, shop, loggedInCustomerId);
+  if (!pre.ok) return pre.response;
+
+  if (!verifyUploadToken(String(body.token || ""), [shop.id, campaignId, pre.customer.id, key, uploadId, String(expires)])
+      || !key.startsWith(`${shop.shopDomain}/`)) {
+    return uploadError("upload_failed", 403);
+  }
+  if (Date.now() > expires) return uploadError("expired", 410);
+
+  if (uploadId) {
+    const parts = (body.parts || [])
+      .map((p) => ({ PartNumber: Number(p.PartNumber), ETag: String(p.ETag || "") }))
+      .filter((p) => p.PartNumber > 0 && p.ETag);
+    if (!parts.length) return uploadError("upload_failed", 422);
+    try {
+      await completeMultipartUpload(key, uploadId, parts);
+    } catch (err) {
+      console.error("[UGME] completeMultipartUpload failed:", err);
+      await abortMultipartUpload(key, uploadId).catch(() => {});
+      return uploadError("upload_failed", 422);
+    }
+  }
+
+  const head = await headObject(key).catch((err) => {
+    console.error("[UGME] headObject failed:", err);
+    return null;
+  });
+  if (!head || head.size === 0) return uploadError("upload_failed", 422);
+  if (head.size > MAX_UPLOAD_BYTES) {
+    await deleteObject(key).catch(() => {});
+    return uploadError("too_large", 413);
+  }
+
+  await prisma.submission.create({
+    data: {
+      campaignId,
+      customerId: pre.customer.id,
+      contentType: pre.campaign.contentType,
+      contentUrl: `r2://${key}`,
+      fileBytes: head.size,
+      description: (body.message || "").slice(0, 2000) || null,
+      subscriptionId: body.subscriptionId || null,
+      rightsAccepted: true,
+    },
+  });
+
+  return uploadJson({ redirect: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` });
 }
 
 function errorRedirect(shopDomain: string, campaignId: string, reason: string): Response {

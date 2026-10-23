@@ -6,6 +6,10 @@
  *
  *   npm run r2:cors              (uses R2_* vars from .env)
  *
+ * Needs an R2 token with bucket *admin* rights. With an object read/write token
+ * you'll get AccessDenied — set the same policy in the Cloudflare dashboard instead
+ * (R2 → bucket → Settings → CORS policy).
+ *
  * Existing CORS rules on the bucket are kept; the read rule is added if missing.
  */
 import { S3Client, PutBucketCorsCommand, GetBucketCorsCommand, type CORSRule } from "@aws-sdk/client-s3";
@@ -31,14 +35,15 @@ const canvasRule: CORSRule = {
   ID: "ugme-canvas-read",
   // Storefronts can live on any custom domain, so allow all origins for reads.
   AllowedOrigins: ["*"],
-  AllowedMethods: ["GET", "HEAD"],
+  // PUT: customers' browsers upload straight to R2 via presigned URLs (submit page)
+  AllowedMethods: ["GET", "HEAD", "PUT"],
   AllowedHeaders: ["*"],
   ExposeHeaders: ["Content-Length", "Content-Range", "Accept-Ranges", "ETag"],
   MaxAgeSeconds: 86400,
 };
 
 const isCanvasRule = (r: CORSRule) =>
-  r.ID === canvasRule.ID || (r.AllowedOrigins?.join() === "*" && r.AllowedMethods?.slice().sort().join() === "GET,HEAD");
+  r.ID === canvasRule.ID || (r.AllowedOrigins?.join() === "*" && ["GET,HEAD", "GET,HEAD,PUT"].includes(r.AllowedMethods?.slice().sort().join() ?? ""));
 const rules = [...existing.filter((r) => !isCanvasRule(r)), canvasRule];
 await client.send(new PutBucketCorsCommand({ Bucket: bucket, CORSConfiguration: { CORSRules: rules } }));
 

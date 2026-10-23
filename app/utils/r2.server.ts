@@ -1,4 +1,14 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID!;
@@ -13,6 +23,10 @@ const r2Client = new S3Client({
     accessKeyId: R2_ACCESS_KEY_ID,
     secretAccessKey: R2_SECRET_ACCESS_KEY,
   },
+  // Newer AWS SDKs add a CRC32 checksum of an *empty* body to presigned PUT URLs,
+  // which makes browser uploads of real files fail. Only checksum when required.
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 
 /**
@@ -118,4 +132,57 @@ export async function uploadToR2(
   });
 
   await r2Client.send(command);
+}
+
+/**
+ * Look up an uploaded object's size/type (used to confirm a direct browser upload
+ * actually landed before creating the submission). Returns null if missing.
+ */
+export async function headObject(key: string): Promise<{ size: number; contentType: string | null } | null> {
+  try {
+    const res = await r2Client.send(new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
+    return { size: Number(res.ContentLength ?? 0), contentType: res.ContentType ?? null };
+  } catch (err: unknown) {
+    const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    if (status === 404) return null;
+    throw err;
+  }
+}
+
+// ── Multipart uploads (large files, uploaded in parallel parts from the browser) ──
+
+export async function createMultipartUpload(key: string, contentType: string): Promise<string> {
+  const res = await r2Client.send(
+    new CreateMultipartUploadCommand({ Bucket: R2_BUCKET_NAME, Key: key, ContentType: contentType }),
+  );
+  if (!res.UploadId) throw new Error("R2 did not return an UploadId");
+  return res.UploadId;
+}
+
+/** Presigned PUT URL for one part (partNumber is 1-based). */
+export async function getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn = 6 * 3600) {
+  return getSignedUrl(
+    r2Client,
+    new UploadPartCommand({ Bucket: R2_BUCKET_NAME, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+    { expiresIn },
+  );
+}
+
+export async function completeMultipartUpload(
+  key: string,
+  uploadId: string,
+  parts: { PartNumber: number; ETag: string }[],
+): Promise<void> {
+  await r2Client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: { Parts: [...parts].sort((a, b) => a.PartNumber - b.PartNumber) },
+    }),
+  );
+}
+
+export async function abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+  await r2Client.send(new AbortMultipartUploadCommand({ Bucket: R2_BUCKET_NAME, Key: key, UploadId: uploadId }));
 }
