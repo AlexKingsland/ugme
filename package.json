@@ -23,6 +23,8 @@
     "canvas:set-app-id": "node scripts/set-canvas-app-id.mjs",
     "r2:cors": "node --env-file=.env --import tsx scripts/r2-cors.ts",
     "posters:backfill": "node --env-file=.env --import tsx scripts/backfill-posters.ts",
+    "rewards:retry": "node --env-file=.env --import tsx scripts/retry-rewards.ts",
+    "test:emails": "node --import tsx scripts/check-email-templates.ts",
     "test:providers": "node --env-file=.env --import tsx scripts/parity/provider-parity.ts --mode adapter --compare scripts/parity/provider-parity.snapshot.json"
   },
   "type": "module",

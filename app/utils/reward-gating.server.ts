@@ -62,6 +62,7 @@ export async function checkRewardGating(params: {
     where: {
       customerId,
       discountProvider: subscriptionProvider,
+      rewardType: "SUBSCRIPTION_DISCOUNT",
       status: "APPLIED",
     },
     include: {
@@ -165,6 +166,7 @@ export async function findActiveRewardToReplace(params: {
     where: {
       customerId,
       discountProvider: subscriptionProvider,
+      rewardType: "SUBSCRIPTION_DISCOUNT",
       status: "APPLIED",
       submission: {
         campaign: { shopId },

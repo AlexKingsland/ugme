@@ -23,3 +23,6 @@ pnpm-lock.yaml
 # Ignore shopify files created during app dev
 .shopify/*
 .shopify.lock
+
+# Local email previews (written when RESEND_API_KEY is not set)
+.email-previews/

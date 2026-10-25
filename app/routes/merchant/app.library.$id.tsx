@@ -38,21 +38,7 @@ function formatDuration(secs: number | null): string {
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `0:${String(s).padStart(2, "0")}`;
 }
 
-function frequencyUnit(freq: string, count: number): string {
-  const units: Record<string, [string, string]> = {
-    DAY: ["day", "days"], WEEK: ["week", "weeks"], MONTH: ["month", "months"],
-  };
-  const [singular, plural] = units[freq] || units.MONTH;
-  return count === 1 ? singular : plural;
-}
 
-function formatReward(discountType: string, discountValue: number, cycles: number, frequency: string = "MONTH"): string {
-  const unit = `${cycles} ${frequencyUnit(frequency, cycles)}`;
-  if (discountType === "FREE") return `${unit} free`;
-  if (discountType === "FIXED_AMOUNT") return `$${discountValue} off × ${unit}`;
-  if (discountType === "PERCENTAGE") return `${discountValue}% off × ${unit}`;
-  return unit;
-}
 
 
 /**
@@ -67,6 +53,8 @@ async function resolveContentUrl(contentUrl: string): Promise<string> {
   return contentUrl;
 }
 
+import { campaignRewardLabel } from "../../utils/rewards/presenters";
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
@@ -77,7 +65,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     where: { id: params.id },
     include: {
       customer: { select: { email: true } },
-      campaign: { select: { id: true, title: true, moment: true, productId: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, shopId: true } },
+      campaign: { select: { id: true, title: true, moment: true, productId: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true, shopId: true } },
       reward: { select: { status: true, cycles: true } },
     },
   });
@@ -119,6 +107,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       rewardCycles: submission.campaign.rewardCycles,
       rewardFrequency: submission.campaign.rewardFrequency,
       discountType: submission.campaign.discountType,
+      rewardLabel: campaignRewardLabel(submission.campaign),
       discountValue: submission.campaign.discountValue,
       rewardStatus: submission.reward?.status || null,
     },
@@ -127,7 +116,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = formData.get("_action") as string;
 
@@ -152,7 +141,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (actionType === "approve") {
     try {
-      const result = await approveSubmission({ submissionId: params.id!, shop });
+      const result = await approveSubmission({ submissionId: params.id!, shop, admin });
       return json({ success: true, action: "approved", ...result });
     } catch (err) {
       return json({ error: err instanceof Error ? err.message : "Approval failed" }, { status: 400 });
@@ -225,7 +214,7 @@ export default function SubmissionDetail() {
   }, [submit, selectedReason, denyNote]);
 
   const isPending = submission.status === "PENDING";
-  const rewardText = formatReward(submission.discountType, submission.discountValue, submission.rewardCycles, submission.rewardFrequency);
+  const rewardText = submission.rewardLabel;
 
   return (
     <Page

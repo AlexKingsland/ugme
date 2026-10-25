@@ -651,8 +651,10 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   }
 
   // ── Reward gating warning for single-discount providers (e.g. Recharge) ──
+  // Only subscription discounts are limited (Recharge allows one discount per
+  // address). Discount codes and store credit can stack, so no warning for those.
   let rewardWarningHtml = "";
-  if (shop.providerConnected) {
+  if (shop.providerConnected && campaign.rewardType === "SUBSCRIPTION_DISCOUNT") {
     try {
       const gating = await checkRewardGating({
         customerId: customer.id,
@@ -1295,6 +1297,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
 
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
+  let resolvedSubscriptionId: string | null = null;
   // ── Product-specific subscription verification (Recharge) ──
   if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId && loggedInCustomerId) {
     try {
@@ -1306,6 +1309,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
       if (subscriber.status !== "eligible") {
         return errorRedirect(shop.shopDomain, campaignId, "no_subscription");
       }
+      resolvedSubscriptionId = subscriber.subscriptionIds[0] ?? null;
     } catch (err) {
       console.error("[UGME] Recharge product subscription check on submit failed:", err);
       // Fail open
@@ -1365,7 +1369,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
       contentUrl: "r2://pending", // temporary, updated after upload
       fileBytes: file.size,
       description: description || null,
-      subscriptionId: subscriptionId || null,
+      subscriptionId: resolvedSubscriptionId,
       rightsAccepted: true,
     },
   });
@@ -1439,6 +1443,7 @@ async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInC
 
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
+  let subscriptionId: string | null = null;
   if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId) {
     try {
       const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
@@ -1447,6 +1452,9 @@ async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInC
         campaign.productId
       );
       if (subscriber.status !== "eligible") return { ok: false as const, response: uploadError("no_subscription", 403) };
+      // Remember which subscription the reward should go to (first match;
+      // re-validated again at approval time).
+      subscriptionId = subscriber.subscriptionIds[0] ?? null;
     } catch (err) {
       console.error("[UGME] Recharge check (direct upload) failed:", err);
       // Fail open, same as the multipart path
@@ -1464,7 +1472,7 @@ async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInC
     };
   }
 
-  return { ok: true as const, campaign, customer };
+  return { ok: true as const, campaign, customer, subscriptionId };
 }
 
 function verifyUploadToken(given: string, parts: string[]): boolean {
@@ -1616,7 +1624,8 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
       durationSecs,
       fileBytes: head.size,
       description: (body.message || "").slice(0, 2000) || null,
-      subscriptionId: body.subscriptionId || null,
+      // Resolved on the server from the provider — never trusted from the browser
+      subscriptionId: pre.subscriptionId,
       rightsAccepted: true,
     },
   });
@@ -1747,6 +1756,9 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
           status: true,
           cycles: true,
           appliedAt: true,
+          rewardType: true,
+          discountCode: true,
+          expiresAt: true,
         },
       },
     },
@@ -1786,7 +1798,13 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
             ${statusBadge(s.status)}
             <span style="font-size: 12px; color: var(--ugme-muted);">${date}</span>
           </div>
-          ${s.status === "APPROVED" ? `<div style="font-size: 13px; color: var(--ugme-success);">${escapeHtml(reward)} — reward applied</div>` : ""}
+          ${s.status === "APPROVED" ? `<div style="font-size: 13px; color: var(--ugme-success);">${escapeHtml(reward)} — ${
+            s.reward?.status === "APPLIED"
+              ? s.reward.rewardType === "DISCOUNT_CODE" && s.reward.discountCode
+                ? `your code: <strong style="font-family: ui-monospace, Menlo, monospace;">${escapeHtml(s.reward.discountCode)}</strong>`
+                : "reward applied"
+              : "reward on its way"
+          }</div>` : ""}
         </div>
         <span style="color: var(--ugme-muted); font-size: 18px; align-self: center; flex-shrink: 0;">›</span>
       </a>
@@ -1882,6 +1900,9 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
           status: true,
           cycles: true,
           appliedAt: true,
+          rewardType: true,
+          discountCode: true,
+          expiresAt: true,
         },
       },
     },
@@ -1961,9 +1982,21 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
   // Reward info for approved
   let rewardHtml = "";
   if (submission.status === "APPROVED") {
-    const appliedLine = submission.reward?.appliedAt
-      ? '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Applied on ' + new Date(submission.reward.appliedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) + '</p>'
-      : '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Your reward will be delivered soon</p>';
+    const r = submission.reward;
+    const fmtDate = (d: Date | string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    let appliedLine: string;
+    if (r?.status === "APPLIED" && r.rewardType === "DISCOUNT_CODE" && r.discountCode) {
+      appliedLine =
+        '<div style="margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">' +
+        '<code style="font-family: ui-monospace, Menlo, monospace; font-size: 16px; font-weight: 700; letter-spacing: 0.04em; background: #fff; border: 1px dashed #059669; color: #065f46; padding: 8px 12px; border-radius: 8px;">' + escapeHtml(r.discountCode) + '</code>' +
+        '</div>' +
+        '<p style="font-size: 13px; color: #065f46; margin: 8px 0 0 0;">Use this code at checkout. Single use' +
+        (r.expiresAt ? ', expires ' + fmtDate(r.expiresAt) : '') + '.</p>';
+    } else if (r?.status === "APPLIED" && r.appliedAt) {
+      appliedLine = '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Applied to your subscription on ' + fmtDate(r.appliedAt) + '</p>';
+    } else {
+      appliedLine = '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Your reward will be delivered soon</p>';
+    }
     rewardHtml = `<div style="background: #ecfdf5; border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 20px;">
         <div class="ugme-section-label" style="color: #065f46;">Reward</div>
         <p style="font-size: 15px; font-weight: 600; color: #065f46; margin: 0;">${escapeHtml(reward)}</p>

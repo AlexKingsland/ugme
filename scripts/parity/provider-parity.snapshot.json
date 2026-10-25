@@ -1,9 +1,20 @@
 {
   "approve/recharge-percentage": {
     "result": {
-      "rewardStatus": "APPLIED"
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
     },
     "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
       {
         "method": "GET",
         "path": "/customers?external_customer_id=777",
@@ -66,27 +77,47 @@
     "rewards": [
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "APPLIED",
         "applied": true,
         "externalDiscountId": "9000",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
         "discountCode": "UGME-PARITYCAMP-S1",
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
     ]
   },
   "approve/recharge-free": {
     "result": {
-      "rewardStatus": "APPLIED"
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
     },
     "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
       {
         "method": "GET",
         "path": "/customers?external_customer_id=777",
@@ -149,27 +180,47 @@
     "rewards": [
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "APPLIED",
         "applied": true,
         "externalDiscountId": "9000",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
         "discountCode": "UGME-PARITYCAMP-S1",
         "discountProvider": "RECHARGE",
-        "cycles": 1
+        "cycles": 1,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
     ]
   },
   "approve/recharge-fixed": {
     "result": {
-      "rewardStatus": "APPLIED"
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
     },
     "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
       {
         "method": "GET",
         "path": "/customers?external_customer_id=777",
@@ -232,28 +283,48 @@
     "rewards": [
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "APPLIED",
         "applied": true,
         "externalDiscountId": "9000",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
         "discountCode": "UGME-PARITYCAMP-S1",
         "discountProvider": "RECHARGE",
-        "cycles": 6
+        "cycles": 6,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
     ]
   },
   "approve/recharge-replaces-existing": {
     "result": {
       "rewardStatus": "APPLIED",
-      "replacedRewardId": "set"
+      "replacedRewardId": "set",
+      "discountCode": "UGME-PARITYCAMP-S1"
     },
     "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
       {
         "method": "PUT",
         "path": "/addresses/6001",
@@ -329,42 +400,68 @@
     "rewards": [
       {
         "submissionId": "s0",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "CREATED",
         "applied": true,
         "externalDiscountId": "555",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 0,
+        "expires": false
       },
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "APPLIED",
         "applied": true,
         "externalDiscountId": "9000",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
         "discountCode": "UGME-PARITYCAMP-S1",
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s0",
-        "status": "PENDING"
+        "status": "PENDING",
+        "subscriptionId": "5001"
       },
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
     ]
   },
   "approve/recharge-replace-clear-fails": {
     "result": {
       "rewardStatus": "APPLIED",
-      "replacedRewardId": "set"
+      "replacedRewardId": "set",
+      "discountCode": "UGME-PARITYCAMP-S1"
     },
     "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
       {
         "method": "PUT",
         "path": "/addresses/6001",
@@ -440,42 +537,67 @@
     "rewards": [
       {
         "submissionId": "s0",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "CREATED",
         "applied": true,
         "externalDiscountId": "555",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 0,
+        "expires": false
       },
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "APPLIED",
         "applied": true,
         "externalDiscountId": "9000",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
         "discountCode": "UGME-PARITYCAMP-S1",
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s0",
-        "status": "PENDING"
+        "status": "PENDING",
+        "subscriptionId": "5001"
       },
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
     ]
   },
   "approve/recharge-create-discount-fails": {
     "result": {
       "rewardStatus": "FAILED",
-      "rewardError": "Could not apply discount to next charge"
+      "rewardError": "Approved — but the reward couldn't be delivered right now. We've logged it and will retry it for you."
     },
     "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
       {
         "method": "GET",
         "path": "/customers?external_customer_id=777",
@@ -526,28 +648,45 @@
     "rewards": [
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "FAILED",
         "applied": false,
         "externalDiscountId": null,
         "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": "Unexpected error: Recharge POST /discounts failed: 422 {\"error\":\"mock failure\"}",
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
-    ]
+    ],
+    "emails": []
   },
   "approve/recharge-apply-address-fails": {
     "result": {
       "rewardStatus": "FAILED",
-      "rewardError": "Could not apply discount to next charge"
+      "rewardError": "Approved — but the reward couldn't be delivered right now. We've logged it and will retry it for you."
     },
     "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
       {
         "method": "GET",
         "path": "/customers?external_customer_id=777",
@@ -615,26 +754,33 @@
     "rewards": [
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "FAILED",
         "applied": false,
         "externalDiscountId": null,
         "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": "Unexpected error: Recharge PUT /addresses/6001 failed: 500 {\"error\":\"mock failure\"}",
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
-    ]
+    ],
+    "emails": []
   },
   "approve/recharge-customer-missing": {
     "result": {
       "rewardStatus": "FAILED",
-      "rewardError": "Could not apply discount to next charge"
+      "rewardError": "Approved — but the reward couldn't be delivered: Customer isn't a Recharge customer."
     },
     "calls": [
       {
@@ -646,93 +792,881 @@
     "rewards": [
       {
         "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "FAILED",
         "applied": false,
         "externalDiscountId": null,
         "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": "Customer isn't a Recharge customer.",
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
-    ]
+    ],
+    "emails": []
   },
   "approve/recharge-no-subscription-id": {
     "result": {
-      "rewardStatus": "CREATED"
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
     },
-    "calls": [],
+    "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions/5001",
+        "token": "shop-token"
+      },
+      {
+        "method": "POST",
+        "path": "/discounts",
+        "token": "shop-token",
+        "body": {
+          "code": "UGME-PARITYCAMP-S1",
+          "discount_type": "percentage",
+          "value": "20",
+          "value_type": "percentage",
+          "applies_to": {
+            "purchase_item_type": "SUBSCRIPTION",
+            "resource": "shopify_product",
+            "ids": [
+              4242
+            ]
+          },
+          "usage_limits": {
+            "max_subsequent_redemptions": 2
+          },
+          "channel_settings": {
+            "api": {
+              "can_apply": true
+            },
+            "checkout_page": {
+              "can_apply": false
+            },
+            "customer_portal": {
+              "can_apply": false
+            },
+            "merchant_portal": {
+              "can_apply": true
+            }
+          },
+          "status": "enabled"
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/addresses/6001",
+        "token": "shop-token",
+        "body": {
+          "discounts": [
+            {
+              "code": "UGME-PARITYCAMP-S1"
+            }
+          ]
+        }
+      }
+    ],
     "rewards": [
       {
         "submissionId": "s1",
-        "status": "CREATED",
-        "applied": false,
-        "externalDiscountId": null,
-        "rechargeChargeId": null,
-        "discountCode": null,
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "9000",
+        "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
+        "discountCode": "UGME-PARITYCAMP-S1",
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
     ]
   },
   "approve/recharge-not-connected": {
     "result": {
-      "rewardStatus": "CREATED"
+      "rewardStatus": "FAILED",
+      "rewardError": "Approved — but the reward couldn't be delivered: Subscription provider isn't connected (Settings → Subscription provider)."
     },
     "calls": [],
     "rewards": [
       {
         "submissionId": "s1",
-        "status": "CREATED",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
+        "status": "FAILED",
         "applied": false,
         "externalDiscountId": null,
         "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": "Subscription provider isn't connected (Settings → Subscription provider).",
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
-    ]
+    ],
+    "emails": []
   },
   "approve/native": {
     "result": {
-      "rewardStatus": "CREATED"
+      "rewardStatus": "FAILED",
+      "rewardError": "Approved — but the reward couldn't be delivered: Subscription discounts through Shopify selling plans aren't supported yet."
     },
     "calls": [],
     "rewards": [
       {
         "submissionId": "s1",
-        "status": "CREATED",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
+        "status": "FAILED",
         "applied": false,
         "externalDiscountId": null,
         "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "SHOPIFY_NATIVE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": "Subscription discounts through Shopify selling plans aren't supported yet.",
+        "attemptCount": 1,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s1",
-        "status": "APPROVED"
+        "status": "APPROVED",
+        "subscriptionId": "5001"
       }
+    ],
+    "emails": []
+  },
+  "approve/recharge-subscription-cancelled": {
+    "result": {
+      "rewardStatus": "FAILED",
+      "rewardError": "Approved — but the reward couldn't be delivered: Customer no longer has an active subscription to Parity Product."
+    },
+    "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      }
+    ],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
+        "status": "FAILED",
+        "applied": false,
+        "externalDiscountId": null,
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": null,
+        "discountProvider": "RECHARGE",
+        "cycles": 3,
+        "failureReason": "Customer no longer has an active subscription to Parity Product.",
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": "5001"
+      }
+    ],
+    "emails": []
+  },
+  "approve/recharge-subscription-swapped": {
+    "result": {
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
+    },
+    "calls": [
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions?customer_id=31&status=active",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/customers?external_customer_id=777",
+        "token": "shop-token"
+      },
+      {
+        "method": "GET",
+        "path": "/subscriptions/5001",
+        "token": "shop-token"
+      },
+      {
+        "method": "POST",
+        "path": "/discounts",
+        "token": "shop-token",
+        "body": {
+          "code": "UGME-PARITYCAMP-S1",
+          "discount_type": "percentage",
+          "value": "20",
+          "value_type": "percentage",
+          "applies_to": {
+            "purchase_item_type": "SUBSCRIPTION",
+            "resource": "shopify_product",
+            "ids": [
+              4242
+            ]
+          },
+          "usage_limits": {
+            "max_subsequent_redemptions": 2
+          },
+          "channel_settings": {
+            "api": {
+              "can_apply": true
+            },
+            "checkout_page": {
+              "can_apply": false
+            },
+            "customer_portal": {
+              "can_apply": false
+            },
+            "merchant_portal": {
+              "can_apply": true
+            }
+          },
+          "status": "enabled"
+        }
+      },
+      {
+        "method": "PUT",
+        "path": "/addresses/6001",
+        "token": "shop-token",
+        "body": {
+          "discounts": [
+            {
+              "code": "UGME-PARITYCAMP-S1"
+            }
+          ]
+        }
+      }
+    ],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "9000",
+        "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
+        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountProvider": "RECHARGE",
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": "5001"
+      }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
     ]
+  },
+  "approve/code-percentage-expiry-min": {
+    "result": {
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
+    },
+    "calls": [
+      {
+        "method": "GRAPHQL",
+        "path": "codeDiscountNodeByCode",
+        "body": {
+          "code": "UGME-PARITYCAMP-S1"
+        }
+      },
+      {
+        "method": "GRAPHQL",
+        "path": "discountCodeBasicCreate",
+        "body": {
+          "basicCodeDiscount": {
+            "title": "UGME reward — Parity Campaign!",
+            "code": "UGME-PARITYCAMP-S1",
+            "startsAt": "<date>",
+            "endsAt": "<date>",
+            "customerSelection": {
+              "customers": {
+                "add": [
+                  "gid://shopify/Customer/777"
+                ]
+              }
+            },
+            "customerGets": {
+              "value": {
+                "percentage": 0.2
+              },
+              "items": {
+                "all": true
+              }
+            },
+            "minimumRequirement": {
+              "subtotal": {
+                "greaterThanOrEqualToSubtotal": "50.00"
+              }
+            },
+            "usageLimit": 1,
+            "appliesOncePerCustomer": true
+          }
+        }
+      }
+    ],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": true
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
+    ]
+  },
+  "approve/code-fixed": {
+    "result": {
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
+    },
+    "calls": [
+      {
+        "method": "GRAPHQL",
+        "path": "codeDiscountNodeByCode",
+        "body": {
+          "code": "UGME-PARITYCAMP-S1"
+        }
+      },
+      {
+        "method": "GRAPHQL",
+        "path": "discountCodeBasicCreate",
+        "body": {
+          "basicCodeDiscount": {
+            "title": "UGME reward — Parity Campaign!",
+            "code": "UGME-PARITYCAMP-S1",
+            "startsAt": "<date>",
+            "endsAt": null,
+            "customerSelection": {
+              "customers": {
+                "add": [
+                  "gid://shopify/Customer/777"
+                ]
+              }
+            },
+            "customerGets": {
+              "value": {
+                "discountAmount": {
+                  "amount": "6.00",
+                  "appliesOnEachItem": false
+                }
+              },
+              "items": {
+                "all": true
+              }
+            },
+            "minimumRequirement": null,
+            "usageLimit": 1,
+            "appliesOncePerCustomer": true
+          }
+        }
+      }
+    ],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
+    ]
+  },
+  "approve/code-already-on-shopify-reused": {
+    "result": {
+      "rewardStatus": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1"
+    },
+    "calls": [
+      {
+        "method": "GRAPHQL",
+        "path": "codeDiscountNodeByCode",
+        "body": {
+          "code": "UGME-PARITYCAMP-S1"
+        }
+      }
+    ],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "gid://shopify/DiscountCodeNode/existing",
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
+    ]
+  },
+  "approve/code-no-amount": {
+    "result": {
+      "rewardStatus": "FAILED",
+      "rewardError": "Approved — but the reward couldn't be delivered: Campaign has no discount amount set."
+    },
+    "calls": [],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "FAILED",
+        "applied": false,
+        "externalDiscountId": null,
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": null,
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": "Campaign has no discount amount set.",
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": []
+  },
+  "approve/code-shopify-rejects": {
+    "result": {
+      "rewardStatus": "FAILED",
+      "rewardError": "Approved — but the reward couldn't be delivered right now. We've logged it and will retry it for you."
+    },
+    "calls": [
+      {
+        "method": "GRAPHQL",
+        "path": "codeDiscountNodeByCode",
+        "body": {
+          "code": "UGME-PARITYCAMP-S1"
+        }
+      },
+      {
+        "method": "GRAPHQL",
+        "path": "discountCodeBasicCreate",
+        "body": {
+          "basicCodeDiscount": {
+            "title": "UGME reward — Parity Campaign!",
+            "code": "UGME-PARITYCAMP-S1",
+            "startsAt": "<date>",
+            "endsAt": null,
+            "customerSelection": {
+              "customers": {
+                "add": [
+                  "gid://shopify/Customer/777"
+                ]
+              }
+            },
+            "customerGets": {
+              "value": {
+                "percentage": 0.1
+              },
+              "items": {
+                "all": true
+              }
+            },
+            "minimumRequirement": null,
+            "usageLimit": 1,
+            "appliesOncePerCustomer": true
+          }
+        }
+      }
+    ],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "FAILED",
+        "applied": false,
+        "externalDiscountId": null,
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": null,
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": "Unexpected error: Shopify rejected the discount: Mock rejection",
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": []
+  },
+  "approve/code-no-admin-client": {
+    "result": {
+      "rewardStatus": "FAILED",
+      "rewardError": "Approved — but the reward couldn't be delivered: Shopify admin access is unavailable for this attempt."
+    },
+    "calls": [],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "FAILED",
+        "applied": false,
+        "externalDiscountId": null,
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": null,
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": "Shopify admin access is unavailable for this attempt.",
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": []
+  },
+  "retry/failed-code-then-succeeds": {
+    "result": {
+      "status": "APPLIED",
+      "discountCode": "UGME-PARITYCAMP-S1",
+      "email": {
+        "status": "sent"
+      }
+    },
+    "calls": [
+      {
+        "method": "GRAPHQL",
+        "path": "codeDiscountNodeByCode",
+        "body": {
+          "code": "UGME-PARITYCAMP-S1"
+        }
+      },
+      {
+        "method": "GRAPHQL",
+        "path": "discountCodeBasicCreate",
+        "body": {
+          "basicCodeDiscount": {
+            "title": "UGME reward — Parity Campaign!",
+            "code": "UGME-PARITYCAMP-S1",
+            "startsAt": "<date>",
+            "endsAt": null,
+            "customerSelection": {
+              "customers": {
+                "add": [
+                  "gid://shopify/Customer/777"
+                ]
+              }
+            },
+            "customerGets": {
+              "value": {
+                "percentage": 0.1
+              },
+              "items": {
+                "all": true
+              }
+            },
+            "minimumRequirement": null,
+            "usageLimit": 1,
+            "appliesOncePerCustomer": true
+          }
+        }
+      }
+    ],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 2,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
+    ]
+  },
+  "retry/already-applied-is-noop": {
+    "result": {
+      "status": "APPLIED",
+      "alreadyApplied": true,
+      "discountCode": "UGME-PARITYCAMP-S1",
+      "email": {
+        "status": "already_sent"
+      }
+    },
+    "calls": [],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "9000",
+        "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": "5001",
+        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountProvider": "RECHARGE",
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": "5001"
+      }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
+    ]
+  },
+  "email/sent-once-across-retries": {
+    "result": [
+      "already_sent",
+      "already_sent"
+    ],
+    "calls": [],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": [
+      "SUBMISSION_APPROVED:s1"
+    ]
+  },
+  "email/not-sent-when-reward-fails": {
+    "result": {
+      "rewardStatus": "FAILED",
+      "rewardError": "Approved — but the reward couldn't be delivered: Campaign has no discount amount set."
+    },
+    "calls": [],
+    "rewards": [
+      {
+        "submissionId": "s1",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "FAILED",
+        "applied": false,
+        "externalDiscountId": null,
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": null,
+        "discountProvider": "SHOPIFY_DISCOUNT_CODE",
+        "cycles": 3,
+        "failureReason": "Campaign has no discount amount set.",
+        "attemptCount": 1,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s1",
+        "status": "APPROVED",
+        "subscriptionId": null
+      }
+    ],
+    "emails": []
+  },
+  "gating/ignores-code-rewards": {
+    "result": {
+      "gating": {
+        "hasActiveReward": false
+      },
+      "replace": null
+    },
+    "calls": [],
+    "rewards": [
+      {
+        "submissionId": "s0",
+        "rewardType": "DISCOUNT_CODE",
+        "status": "APPLIED",
+        "applied": true,
+        "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
+        "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
+        "discountCode": null,
+        "discountProvider": "RECHARGE",
+        "cycles": 1,
+        "failureReason": null,
+        "attemptCount": 0,
+        "expires": false
+      }
+    ],
+    "submissions": [
+      {
+        "id": "s0",
+        "status": "PENDING",
+        "subscriptionId": null
+      }
+    ],
+    "emails": []
   },
   "gating/single-discount-flags": {
     "result": {
@@ -741,7 +1675,8 @@
     },
     "calls": [],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "gating/recharge-active-reward": {
     "result": {
@@ -762,21 +1697,28 @@
     "rewards": [
       {
         "submissionId": "s0",
+        "rewardType": "SUBSCRIPTION_DISCOUNT",
         "status": "APPLIED",
         "applied": true,
         "externalDiscountId": "555",
         "rechargeChargeId": "6001",
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "RECHARGE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 0,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s0",
-        "status": "PENDING"
+        "status": "PENDING",
+        "subscriptionId": "5001"
       }
-    ]
+    ],
+    "emails": []
   },
   "gating/native": {
     "result": {
@@ -789,21 +1731,28 @@
     "rewards": [
       {
         "submissionId": "s0",
+        "rewardType": "DISCOUNT_CODE",
         "status": "APPLIED",
         "applied": true,
         "externalDiscountId": null,
         "rechargeChargeId": null,
+        "rechargeSubscriptionId": null,
         "discountCode": null,
         "discountProvider": "SHOPIFY_NATIVE",
-        "cycles": 3
+        "cycles": 3,
+        "failureReason": null,
+        "attemptCount": 0,
+        "expires": false
       }
     ],
     "submissions": [
       {
         "id": "s0",
-        "status": "PENDING"
+        "status": "PENDING",
+        "subscriptionId": "5001"
       }
-    ]
+    ],
+    "emails": []
   },
   "subscriber/eligible": {
     "result": {
@@ -825,7 +1774,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "subscriber/no-customer": {
     "result": {
@@ -839,7 +1789,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "subscriber/no-matching-subscription": {
     "result": {
@@ -858,7 +1809,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "subscriber/api-error": {
     "result": {
@@ -872,13 +1824,15 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "subscriber/native-skipped": {
     "result": "skipped",
     "calls": [],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "plans/recharge-has": {
     "result": true,
@@ -890,7 +1844,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "plans/recharge-none": {
     "result": false,
@@ -902,7 +1857,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "plans/recharge-api-error": {
     "result": false,
@@ -914,7 +1870,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "plans/recharge-no-token-falls-back-to-shopify": {
     "result": true,
@@ -928,7 +1885,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "plans/native-has": {
     "result": true,
@@ -942,7 +1900,8 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "plans/native-none": {
     "result": false,
@@ -956,12 +1915,14 @@
       }
     ],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   },
   "plans/not-connected": {
     "result": false,
     "calls": [],
     "rewards": [],
-    "submissions": []
+    "submissions": [],
+    "emails": []
   }
 }

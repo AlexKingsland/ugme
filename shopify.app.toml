@@ -6,7 +6,7 @@ application_url = "https://localhost:3458"
 embedded = true
 
 [access_scopes]
-scopes = "read_customers,write_metaobjects"
+scopes = "read_customers,write_metaobjects,write_discounts"
 
 [webhooks]
 api_version = "2026-10"

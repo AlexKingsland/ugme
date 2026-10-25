@@ -44,6 +44,9 @@ const dir = mkdtempSync(join(tmpdir(), "ugme-parity-"));
 const dbFile = join(dir, "parity.sqlite");
 copyFileSync(resolve("prisma/dev.sqlite"), dbFile);
 const prisma = new PrismaClient({ datasources: { db: { url: `file:${dbFile}` } } });
+// Emails: always preview mode, written to the temp dir (never really sent)
+delete process.env.RESEND_API_KEY;
+process.env.EMAIL_PREVIEW_DIR = join(dir, "emails");
 (globalThis as any).prismaGlobal = prisma;
 
 // ── mocked provider APIs ────────────────────────────────────────
@@ -65,7 +68,7 @@ const jsonRes = (status: number, body: unknown) =>
   const method = (init?.method || "GET").toUpperCase();
   const path = url.pathname + url.search;
   const headers = (init?.headers || {}) as Record<string, string>;
-  calls.push({ method, path, token: headers["X-Recharge-Access-Token"] ?? null, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+  calls.push({ method, path, token: headers["X-Recharge-Access-Token"] ?? null, body: init?.body ? scrubDates(JSON.parse(String(init.body))) : undefined });
   for (const [k, status] of Object.entries(failures)) {
     const [m, p] = k.split(" ");
     if (m === method && path.startsWith(p)) return jsonRes(status, { error: "mock failure" });
@@ -97,10 +100,37 @@ const jsonRes = (status: number, body: unknown) =>
   return jsonRes(404, { error: "unmocked " + method + " " + path });
 };
 
+const scrubDates = (v: unknown): unknown =>
+  typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)
+    ? "<date>"
+    : Array.isArray(v)
+      ? v.map(scrubDates)
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrubDates(x)]))
+        : v;
+
 let sellingPlanEdges = 0;
+let existingShopifyCodes = new Set<string>();
 const admin = {
   graphql: async (query: string, opts?: { variables?: Record<string, unknown> }) => {
-    calls.push({ method: "GRAPHQL", path: query.includes("sellingPlanGroups") ? "sellingPlanGroups" : "codeDiscountNodes", body: opts?.variables });
+    const op = query.includes("sellingPlanGroups")
+      ? "sellingPlanGroups"
+      : query.includes("discountCodeBasicCreate")
+        ? "discountCodeBasicCreate"
+        : query.includes("codeDiscountNodeByCode")
+          ? "codeDiscountNodeByCode"
+          : "codeDiscountNodes";
+    calls.push({ method: "GRAPHQL", path: op, body: scrubDates(opts?.variables) });
+    if (failures[`GRAPHQL ${op}`]) {
+      return jsonRes(200, { data: { [op]: { codeDiscountNode: null, userErrors: [{ field: ["basicCodeDiscount"], message: "Mock rejection", code: "INVALID" }] } } });
+    }
+    if (op === "codeDiscountNodeByCode") {
+      const code = String(opts?.variables?.code);
+      return jsonRes(200, { data: { codeDiscountNodeByCode: existingShopifyCodes.has(code) ? { id: "gid://shopify/DiscountCodeNode/existing" } : null } });
+    }
+    if (op === "discountCodeBasicCreate") {
+      return jsonRes(200, { data: { discountCodeBasicCreate: { codeDiscountNode: { id: "gid://shopify/DiscountCodeNode/1" }, userErrors: [] } } });
+    }
     return jsonRes(200, { data: { product: { sellingPlanGroups: { edges: Array.from({ length: sellingPlanEdges }, (_, i) => ({ node: { id: `sp${i}`, name: "Plan" } })) } } } });
   },
 };
@@ -109,6 +139,7 @@ const admin = {
 const SHOP_R = "parity-shop-recharge";
 const SHOP_N = "parity-shop-native";
 async function resetFixtures() {
+  await prisma.emailLog.deleteMany({ where: { customer: { shopId: { in: [SHOP_R, SHOP_N] } } } });
   await prisma.reward.deleteMany({ where: { submission: { campaign: { shopId: { in: [SHOP_R, SHOP_N] } } } } });
   await prisma.submission.deleteMany({ where: { campaign: { shopId: { in: [SHOP_R, SHOP_N] } } } });
   await prisma.customer.deleteMany({ where: { shopId: { in: [SHOP_R, SHOP_N] } } });
@@ -121,13 +152,17 @@ async function resetFixtures() {
 async function makeSubmission(opts: {
   shopId: string; id: string; discountType?: "FREE" | "PERCENTAGE" | "FIXED_AMOUNT"; discountValue?: number; cycles?: number;
   subscriptionId?: string | null; shopifyCustomerId?: string | null; customerId?: string;
+  rewardType?: "DISCOUNT_CODE" | "SUBSCRIPTION_DISCOUNT"; codeType?: "PERCENTAGE" | "FIXED_AMOUNT"; codeAmount?: number | null;
+  codeExpiryDays?: number | null; codeMinOrder?: number | null; approved?: boolean;
 }) {
   const campaignId = `${opts.id}-camp`;
   await prisma.campaign.create({
     data: {
       id: campaignId, shopId: opts.shopId, title: "Parity Campaign!", moment: "m", status: "ACTIVE",
-      productId: "gid://shopify/Product/4242", rewardType: "SUBSCRIPTION_DISCOUNT",
+      productId: "gid://shopify/Product/4242", productTitle: "Parity Product", rewardType: opts.rewardType || "SUBSCRIPTION_DISCOUNT",
       discountType: opts.discountType || "PERCENTAGE", discountValue: opts.discountValue ?? 20, rewardCycles: opts.cycles ?? 3,
+      discountCodeType: opts.codeType ?? null, discountCodeAmount: opts.codeAmount ?? null,
+      discountCodeExpiryDays: opts.codeExpiryDays ?? null, discountCodeMinOrder: opts.codeMinOrder ?? null,
     },
   });
   const customerId = opts.customerId || `${opts.id}-cust`;
@@ -137,7 +172,11 @@ async function makeSubmission(opts: {
     create: { id: customerId, shopId: opts.shopId, email: `${customerId}@x.com`, shopifyCustomerId: opts.shopifyCustomerId === undefined ? "777" : opts.shopifyCustomerId },
   });
   await prisma.submission.create({
-    data: { id: opts.id, campaignId, customerId, contentUrl: "r2://x/y.mp4", subscriptionId: opts.subscriptionId === undefined ? "5001" : opts.subscriptionId },
+    data: {
+      id: opts.id, campaignId, customerId, contentUrl: "r2://x/y.mp4",
+      subscriptionId: opts.subscriptionId === undefined ? "5001" : opts.subscriptionId,
+      status: opts.approved ? "APPROVED" : "PENDING",
+    },
   });
   return { campaignId, customerId };
 }
@@ -147,14 +186,19 @@ async function shopRow(id: string) {
 }
 
 const normRewards = (rows: any[]) =>
-  rows.map((r) => ({ submissionId: r.submissionId, status: r.status, applied: !!r.appliedAt, externalDiscountId: r.externalDiscountId, rechargeChargeId: r.rechargeChargeId, discountCode: r.discountCode, discountProvider: r.discountProvider, cycles: r.cycles }));
+  rows.map((r) => ({
+    submissionId: r.submissionId, rewardType: r.rewardType, status: r.status, applied: !!r.appliedAt,
+    externalDiscountId: r.externalDiscountId, rechargeChargeId: r.rechargeChargeId, rechargeSubscriptionId: r.rechargeSubscriptionId,
+    discountCode: r.discountCode, discountProvider: r.discountProvider, cycles: r.cycles,
+    failureReason: r.failureReason ?? null, attemptCount: r.attemptCount ?? 0, expires: !!r.expiresAt,
+  }));
 
 // ── scenarios ───────────────────────────────────────────────────
 const record: Record<string, unknown> = {};
 
 async function scenario(name: string, setup: () => Promise<void>, run: () => Promise<unknown>) {
   await resetFixtures();
-  calls = []; failures = {}; nextDiscountId = 9000; sellingPlanEdges = 0;
+  calls = []; failures = {}; nextDiscountId = 9000; sellingPlanEdges = 0; existingShopifyCodes = new Set();
   rechargeData = {
     customers: { "777": { id: 31 } },
     subscriptionsByCustomer: { 31: [{ id: 5001, address_id: 6001, external_product_id: { ecommerce: "4242" } }, { id: 5002, address_id: 6001, external_product_id: { ecommerce: "9999" } }] },
@@ -169,12 +213,23 @@ async function scenario(name: string, setup: () => Promise<void>, run: () => Pro
     result = { threw: String((e as Error).message).slice(0, 120) };
   }
   const rewards = await prisma.reward.findMany({ where: { submission: { campaign: { shopId: { in: [SHOP_R, SHOP_N] } } } }, orderBy: { submissionId: "asc" } });
-  const subs = await prisma.submission.findMany({ where: { campaign: { shopId: { in: [SHOP_R, SHOP_N] } } }, select: { id: true, status: true }, orderBy: { id: "asc" } });
+  const subs = await prisma.submission.findMany({ where: { campaign: { shopId: { in: [SHOP_R, SHOP_N] } } }, select: { id: true, status: true, subscriptionId: true }, orderBy: { id: "asc" } });
+  // Volatile email details (preview file path) → keep only the status
+  if (result && typeof result === "object" && (result as any).email) {
+    (result as any).email = { status: (result as any).email.status };
+  }
   // Generated IDs differ between runs — keep only whether they were set
   if (result && typeof result === "object" && "replacedRewardId" in (result as any)) {
     (result as any).replacedRewardId = (result as any).replacedRewardId ? "set" : undefined;
   }
-  record[name] = { result, calls, rewards: normRewards(rewards), submissions: subs };
+  const emails = await prisma.emailLog.findMany({
+    where: { customer: { shopId: { in: [SHOP_R, SHOP_N] } } },
+    select: { type: true, metadata: true },
+  });
+  record[name] = {
+    result, calls, rewards: normRewards(rewards), submissions: subs,
+    emails: emails.map((e) => `${e.type}:${JSON.parse(e.metadata).submissionId}`).sort(),
+  };
 }
 
 const approval = await imp("app/utils/approval.server.ts");
@@ -183,19 +238,19 @@ const recharge = await imp("app/utils/recharge.server.ts");
 const providers = mode === "adapter" ? await imp("app/utils/providers/index.ts") : null;
 
 // Approval — the core reward path
-const approve = async (subId: string, shopId: string) => approval.approveSubmission({ submissionId: subId, shop: await shopRow(shopId) });
+const approve = async (subId: string, shopId: string) => approval.approveSubmission({ submissionId: subId, shop: await shopRow(shopId), admin });
 
 await scenario("approve/recharge-percentage", async () => { await makeSubmission({ shopId: SHOP_R, id: "s1" }); }, () => approve("s1", SHOP_R));
 await scenario("approve/recharge-free", async () => { await makeSubmission({ shopId: SHOP_R, id: "s1", discountType: "FREE", discountValue: 0, cycles: 1 }); }, () => approve("s1", SHOP_R));
 await scenario("approve/recharge-fixed", async () => { await makeSubmission({ shopId: SHOP_R, id: "s1", discountType: "FIXED_AMOUNT", discountValue: 7.5, cycles: 6 }); }, () => approve("s1", SHOP_R));
 await scenario("approve/recharge-replaces-existing", async () => {
   await makeSubmission({ shopId: SHOP_R, id: "s0", customerId: "c-shared" });
-  await prisma.reward.create({ data: { submissionId: "s0", customerId: "c-shared", status: "APPLIED", appliedAt: new Date(), discountProvider: "RECHARGE", externalDiscountId: "555", rechargeChargeId: "6001", cycles: 3 } });
+  await prisma.reward.create({ data: { submissionId: "s0", customerId: "c-shared", status: "APPLIED", appliedAt: new Date(), discountProvider: "RECHARGE", rewardType: "SUBSCRIPTION_DISCOUNT", externalDiscountId: "555", rechargeChargeId: "6001", cycles: 3 } });
   await makeSubmission({ shopId: SHOP_R, id: "s1", customerId: "c-shared" });
 }, () => approve("s1", SHOP_R));
 await scenario("approve/recharge-replace-clear-fails", async () => {
   await makeSubmission({ shopId: SHOP_R, id: "s0", customerId: "c-shared" });
-  await prisma.reward.create({ data: { submissionId: "s0", customerId: "c-shared", status: "APPLIED", appliedAt: new Date(), discountProvider: "RECHARGE", externalDiscountId: "555", rechargeChargeId: "6001", cycles: 3 } });
+  await prisma.reward.create({ data: { submissionId: "s0", customerId: "c-shared", status: "APPLIED", appliedAt: new Date(), discountProvider: "RECHARGE", rewardType: "SUBSCRIPTION_DISCOUNT", externalDiscountId: "555", rechargeChargeId: "6001", cycles: 3 } });
   await makeSubmission({ shopId: SHOP_R, id: "s1", customerId: "c-shared" });
   failures = { "DELETE /discounts/555": 500 };
 }, async () => { failures = { "DELETE /discounts/555": 500 }; return approve("s1", SHOP_R); });
@@ -209,6 +264,74 @@ await scenario("approve/recharge-not-connected", async () => {
 }, () => approve("s1", SHOP_R));
 await scenario("approve/native", async () => { await makeSubmission({ shopId: SHOP_N, id: "s1" }); }, () => approve("s1", SHOP_N));
 
+// Subscription re-validation at approval time
+await scenario("approve/recharge-subscription-cancelled", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1" });
+  rechargeData.subscriptionsByCustomer[31] = [{ id: 5002, address_id: 6001, external_product_id: { ecommerce: "9999" } }];
+}, () => approve("s1", SHOP_R));
+await scenario("approve/recharge-subscription-swapped", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", subscriptionId: "5000" });
+}, () => approve("s1", SHOP_R));
+
+// Discount-code campaigns
+const codeCampaign = { rewardType: "DISCOUNT_CODE" as const, subscriptionId: null };
+await scenario("approve/code-percentage-expiry-min", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeType: "PERCENTAGE", codeAmount: 20, codeExpiryDays: 30, codeMinOrder: 50 });
+}, () => approve("s1", SHOP_R));
+await scenario("approve/code-fixed", async () => {
+  await makeSubmission({ shopId: SHOP_N, id: "s1", ...codeCampaign, codeType: "FIXED_AMOUNT", codeAmount: 6 });
+}, () => approve("s1", SHOP_N));
+await scenario("approve/code-already-on-shopify-reused", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeType: "FIXED_AMOUNT", codeAmount: 6 });
+  existingShopifyCodes.add("UGME-PARITYCAMP-S1");
+}, () => approve("s1", SHOP_R));
+await scenario("approve/code-no-amount", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeAmount: null });
+}, () => approve("s1", SHOP_R));
+await scenario("approve/code-shopify-rejects", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeType: "PERCENTAGE", codeAmount: 10 });
+}, async () => { failures = { "GRAPHQL discountCodeBasicCreate": 1 }; return approve("s1", SHOP_R); });
+await scenario("approve/code-no-admin-client", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeType: "PERCENTAGE", codeAmount: 10 });
+}, async () => approval.approveSubmission({ submissionId: "s1", shop: await shopRow(SHOP_R) }));
+
+// Retry path (scripts/retry-rewards.ts uses fulfillReward)
+await scenario("retry/failed-code-then-succeeds", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeType: "PERCENTAGE", codeAmount: 10 });
+  failures = { "GRAPHQL discountCodeBasicCreate": 1 };
+  await approve("s1", SHOP_R);
+  failures = {};
+}, async () => {
+  const rewards = await imp("app/utils/rewards.server.ts");
+  return rewards.fulfillReward({ submissionId: "s1", shop: await shopRow(SHOP_R), admin });
+});
+await scenario("retry/already-applied-is-noop", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1" });
+  await approve("s1", SHOP_R);
+}, async () => {
+  const rewards = await imp("app/utils/rewards.server.ts");
+  return rewards.fulfillReward({ submissionId: "s1", shop: await shopRow(SHOP_R), admin });
+});
+await scenario("email/sent-once-across-retries", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeType: "PERCENTAGE", codeAmount: 15 });
+  await approve("s1", SHOP_R);
+}, async () => {
+  const rewards = await imp("app/utils/rewards.server.ts");
+  const again1 = await rewards.fulfillReward({ submissionId: "s1", shop: await shopRow(SHOP_R), admin });
+  const again2 = await rewards.fulfillReward({ submissionId: "s1", shop: await shopRow(SHOP_R), admin });
+  return [again1.email?.status, again2.email?.status];
+});
+await scenario("email/not-sent-when-reward-fails", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s1", ...codeCampaign, codeAmount: null });
+}, () => approve("s1", SHOP_R));
+await scenario("gating/ignores-code-rewards", async () => {
+  await makeSubmission({ shopId: SHOP_R, id: "s0", customerId: "c-shared", ...codeCampaign, codeType: "PERCENTAGE", codeAmount: 10 });
+  await prisma.reward.create({ data: { submissionId: "s0", customerId: "c-shared", rewardType: "DISCOUNT_CODE", status: "APPLIED", appliedAt: new Date("2030-01-01"), discountProvider: "RECHARGE", externalDiscountId: "gid://shopify/DiscountCodeNode/1", cycles: 1 } });
+}, async () => ({
+  gating: await gating.checkRewardGating({ customerId: "c-shared", shopId: SHOP_R, subscriptionProvider: "RECHARGE" }),
+  replace: await gating.findActiveRewardToReplace({ customerId: "c-shared", shopId: SHOP_R, subscriptionProvider: "RECHARGE" }),
+}));
+
 // Reward gating (single-discount providers)
 await scenario("gating/single-discount-flags", async () => {}, async () => ({
   RECHARGE: gating.isSingleDiscountProvider("RECHARGE"),
@@ -216,7 +339,7 @@ await scenario("gating/single-discount-flags", async () => {}, async () => ({
 }));
 await scenario("gating/recharge-active-reward", async () => {
   await makeSubmission({ shopId: SHOP_R, id: "s0", customerId: "c-shared" });
-  await prisma.reward.create({ data: { submissionId: "s0", customerId: "c-shared", status: "APPLIED", appliedAt: new Date("2030-01-01"), discountProvider: "RECHARGE", externalDiscountId: "555", rechargeChargeId: "6001", cycles: 3 } });
+  await prisma.reward.create({ data: { submissionId: "s0", customerId: "c-shared", status: "APPLIED", appliedAt: new Date("2030-01-01"), discountProvider: "RECHARGE", rewardType: "SUBSCRIPTION_DISCOUNT", externalDiscountId: "555", rechargeChargeId: "6001", cycles: 3 } });
 }, async () => {
   const g = await gating.checkRewardGating({ customerId: "c-shared", shopId: SHOP_R, subscriptionProvider: "RECHARGE" });
   const r = await gating.findActiveRewardToReplace({ customerId: "c-shared", shopId: SHOP_R, subscriptionProvider: "RECHARGE" });

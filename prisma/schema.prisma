@@ -226,7 +226,11 @@ model Reward {
   rechargeSubscriptionId String?
   discountCode       String?
   appliedAt          DateTime?
+  expiresAt          DateTime?        // discount-code rewards: when the code stops working
   status             RewardStatus         @default(CREATED)
+  failureReason      String?          // why the last fulfilment attempt failed (internal — not shown to customers)
+  attemptCount       Int              @default(0)
+  lastAttemptAt      DateTime?
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 

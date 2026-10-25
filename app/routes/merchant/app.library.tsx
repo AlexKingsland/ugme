@@ -49,17 +49,9 @@ function formatDuration(secs: number | null): string {
   return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `0:${String(s).padStart(2, "0")}`;
 }
 
-function frequencyShort(freq: string): string {
-  return freq === "DAY" ? "d" : freq === "WEEK" ? "wk" : "mo";
-}
 
-function formatReward(discountType: string, discountValue: number, cycles: number, frequency: string = "MONTH"): string {
-  const u = frequencyShort(frequency);
-  if (discountType === "FREE") return `${cycles} ${u} free`;
-  if (discountType === "FIXED_AMOUNT") return `$${discountValue}/${u} × ${cycles} ${u}`;
-  if (discountType === "PERCENTAGE") return `${discountValue}% off × ${cycles} ${u}`;
-  return `${cycles} ${u}`;
-}
+
+import { campaignRewardLabel } from "../../utils/rewards/presenters";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -128,7 +120,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where,
     include: {
       customer: { select: { email: true } },
-      campaign: { select: { title: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true } },
+      campaign: { select: { title: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true } },
     },
     orderBy: { createdAt: tab === "pending" ? (sort === "oldest" ? "asc" : "desc") : "desc" },
   });
@@ -177,6 +169,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         rewardCycles: s.campaign.rewardCycles,
         rewardFrequency: s.campaign.rewardFrequency,
         discountType: s.campaign.discountType,
+        rewardLabel: campaignRewardLabel(s.campaign),
         discountValue: s.campaign.discountValue,
         usageTags: JSON.parse(s.usageTags || "[]"),
         rightsAccepted: s.rightsAccepted,
@@ -204,7 +197,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = formData.get("_action") as string;
 
@@ -214,7 +207,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "approve") {
     const submissionId = formData.get("submissionId") as string;
     try {
-      const result = await approveSubmission({ submissionId, shop });
+      const result = await approveSubmission({ submissionId, shop, admin });
       return json({ success: true, ...result });
     } catch (err) {
       return json({ error: err instanceof Error ? err.message : "Approval failed" }, { status: 400 });
@@ -544,7 +537,7 @@ export default function Library() {
                           {sub.contentType === "VIDEO" ? "Video" : "Photo"}{sub.description ? `: ${sub.description}` : ""}
                         </Text>
                         <Text as="span" variant="bodySm" tone="subdued">
-                          Waiting {timeAgo(sub.createdAt)} · {formatReward(sub.discountType, sub.discountValue, sub.rewardCycles, sub.rewardFrequency)} reward
+                          Waiting {timeAgo(sub.createdAt)} · {sub.rewardLabel} reward
                         </Text>
                       </BlockStack>
                     </Link>
