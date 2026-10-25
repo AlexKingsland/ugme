@@ -25,10 +25,34 @@
     return bundlePromise;
   }
 
+  // Fetch the media list and warm the thumbnails *while* the 3D bundle downloads,
+  // instead of one after the other. The bundle picks up root.__ugmeData.
+  function prefetchData(root) {
+    if (root.__ugmeData || !window.fetch) return;
+    var endpoint = root.getAttribute("data-endpoint") || "/apps/ugme/canvas";
+    var campaigns = root.getAttribute("data-campaigns") || "";
+    var url = endpoint + (campaigns ? (endpoint.indexOf("?") < 0 ? "?" : "&") + "campaigns=" + encodeURIComponent(campaigns.replace(/,+$/, "")) : "");
+    root.__ugmeData = fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (data) {
+        var items = (data && data.items) || [];
+        for (var i = 0; i < items.length; i++) {
+          var src = items[i].thumb || (items[i].type === "image" ? items[i].src : null);
+          if (!src) continue;
+          var img = new Image();
+          img.crossOrigin = "anonymous"; // must match the bundle's CORS mode to share the cache
+          img.src = src;
+        }
+        return data;
+      });
+    root.__ugmeData.catch(function () { root.__ugmeData = null; });
+  }
+
   function start(root) {
     if (root.__ugmeStarted) return;
     root.__ugmeStarted = true;
     var go = function () {
+      prefetchData(root);
       loadBundle(root.getAttribute("data-bundle")).then(function () {
         root.__ugmeUnmount = window.UgmeCanvas.mount(root);
       }).catch(function (e) { console.error("[ugme-canvas]", e); });
@@ -55,6 +79,7 @@
     for (var i = 0; i < nodes.length; i++) {
       if (nodes[i].__ugmeUnmount) nodes[i].__ugmeUnmount();
       nodes[i].__ugmeStarted = false;
+      nodes[i].__ugmeData = null;
     }
   }
 

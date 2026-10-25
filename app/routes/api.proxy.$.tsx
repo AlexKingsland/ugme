@@ -3,7 +3,7 @@ import prisma from "../db.server";
 import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
 import crypto from "crypto";
-import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl, getPresignedUploadUrl, headObject, createMultipartUpload, getPresignedPartUrl, completeMultipartUpload, abortMultipartUpload } from "../utils/r2.server";
+import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl, getPresignedUploadUrl, headObject, posterKeyFor, createMultipartUpload, getPresignedPartUrl, completeMultipartUpload, abortMultipartUpload } from "../utils/r2.server";
 import { verifyActiveSubscriber, getRechargeCustomer, getActiveSubscriptionsForProduct, applyRewardToNextCharge } from "../utils/recharge.server";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { checkRewardGating } from "../utils/reward-gating.server";
@@ -1065,6 +1065,119 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         return etags.map(function(etag, i) { return { PartNumber: i + 1, ETag: etag }; });
       }
 
+      // ── Poster: grab a frame (video) or downscale (photo) from the LOCAL file,
+      // so the Social Wall gets a tiny thumbnail instead of decoding the video
+      // in every shopper's browser. Best-effort: failures never block submitting.
+      const POSTER_MAX = 800;
+      let posterPromise = null;
+
+      function canvasFrom(source, w, h) {
+        const scale = Math.min(1, POSTER_MAX / Math.max(w, h));
+        const c = document.createElement('canvas');
+        c.width = Math.max(2, Math.round(w * scale));
+        c.height = Math.max(2, Math.round(h * scale));
+        c.getContext('2d').drawImage(source, 0, 0, c.width, c.height);
+        return c;
+      }
+
+      function looksEmpty(c) {
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const step = Math.max(4, Math.floor((c.width * c.height) / 400)) * 4;
+        let maxLum = 0, opaque = false;
+        for (let i = 0; i < d.length; i += step) {
+          if (d[i + 3] !== 0) opaque = true;
+          const lum = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+          if (lum > maxLum) maxLum = lum;
+        }
+        return !opaque || maxLum < 12;
+      }
+
+      function toJpeg(c) {
+        return new Promise(function(resolve) { c.toBlob(function(b) { resolve(b); }, 'image/jpeg', 0.82); });
+      }
+
+      function photoPoster(file) {
+        return new Promise(function(resolve) {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = function() {
+            const c = canvasFrom(img, img.naturalWidth, img.naturalHeight);
+            URL.revokeObjectURL(url);
+            toJpeg(c).then(function(blob) { resolve({ blob: blob, duration: null }); });
+          };
+          img.onerror = function() { URL.revokeObjectURL(url); resolve(null); };
+          img.src = url;
+        });
+      }
+
+      function videoPoster(file) {
+        return new Promise(function(resolve) {
+          const url = URL.createObjectURL(file);
+          const v = document.createElement('video');
+          // iOS only decodes frames for muted, inline, on-page videos that have played.
+          v.muted = true; v.defaultMuted = true; v.setAttribute('muted', '');
+          v.playsInline = true; v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+          v.preload = 'auto';
+          v.style.cssText = 'position:fixed;left:-10000px;top:0;width:360px;height:640px;opacity:0;pointer-events:none;';
+          document.body.appendChild(v);
+          let done = false, tries = 0, t = 0.5;
+          const finish = function(result) {
+            if (done) return; done = true; clearTimeout(timer);
+            v.pause(); v.removeAttribute('src'); v.load(); v.remove(); URL.revokeObjectURL(url);
+            resolve(result);
+          };
+          const timer = setTimeout(function() { finish(null); }, 12000);
+          const draw = function() {
+            if (done) return;
+            try {
+              const c = canvasFrom(v, v.videoWidth || 720, v.videoHeight || 1280);
+              if (looksEmpty(c) && tries++ < 10) {
+                if (tries % 3 === 0 && isFinite(v.duration)) { t = Math.min(t + 0.75, Math.max(0, v.duration - 0.1)); v.currentTime = t; return; }
+                setTimeout(draw, 150); return;
+              }
+              toJpeg(c).then(function(blob) { finish({ blob: blob, duration: isFinite(v.duration) ? v.duration : null }); });
+            } catch (e) { finish(null); }
+          };
+          const whenReady = function() {
+            if (v.requestVideoFrameCallback) { v.requestVideoFrameCallback(function() { draw(); }); setTimeout(draw, 400); }
+            else setTimeout(draw, 80);
+          };
+          v.addEventListener('seeked', function() {
+            if (v.readyState >= 2) whenReady(); else v.addEventListener('loadeddata', whenReady, { once: true });
+          });
+          v.addEventListener('loadedmetadata', function() {
+            t = isFinite(v.duration) ? Math.min(0.5, v.duration / 3) : 0.1;
+            const seek = function() { v.pause(); v.currentTime = t; };
+            const p = v.play();
+            if (p && p.then) p.then(function() { setTimeout(seek, 50); }).catch(seek); else seek();
+          });
+          v.addEventListener('error', function() { finish(null); });
+          v.src = url; v.load();
+        });
+      }
+
+      function makePoster(file) {
+        if (!posterPromise) {
+          posterPromise = (file.type.indexOf('video') === 0 ? videoPoster(file) : photoPoster(file)).catch(function() { return null; });
+        }
+        return posterPromise;
+      }
+
+      fileInput.addEventListener('change', function() { posterPromise = null; });
+      removeFile.addEventListener('click', function() { posterPromise = null; });
+
+      async function uploadPoster(ticket, file) {
+        if (!ticket.posterUploadUrl) return { ok: false, duration: null };
+        const poster = await makePoster(file);
+        if (!poster || !poster.blob) return { ok: false, duration: null };
+        try {
+          await putBlob(ticket.posterUploadUrl, poster.blob, 'image/jpeg', function() {});
+          return { ok: true, duration: poster.duration };
+        } catch (e) {
+          return { ok: false, duration: poster.duration };
+        }
+      }
+
       async function directUpload() {
         const file = fileInput.files && fileInput.files[0];
         if (!file) return;
@@ -1082,6 +1195,9 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         } catch (err) {
           return file.size <= LEGACY_MAX_BYTES ? nativeFallback() : fail('Upload couldn\u2019t start. Please try again.');
         }
+
+        makePoster(file); // start decoding the thumbnail while the upload runs
+        const posterUpload = uploadPoster(ticket, file);
 
         let parts = null;
         try {
@@ -1101,8 +1217,14 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
 
         showProgress('Finishing up…', 100, file.size, file.size, '');
         const fields = new FormData(form);
+        const poster = await Promise.race([
+          posterUpload,
+          new Promise(function(r) { setTimeout(function() { r({ ok: false, duration: null }); }, 8000); }),
+        ]);
         try {
           const r = await postJson(stepUrl('complete'), {
+            hasPoster: !!poster.ok,
+            durationSecs: poster.duration,
             key: ticket.key,
             uploadId: ticket.uploadId || '',
             parts: parts,
@@ -1413,6 +1535,10 @@ async function handleUploadUrl(campaignId: string, shop: ShopInfo, loggedInCusto
   const ttlSecs = 6 * 60 * 60; // 6h to finish (1 GB on a slow connection)
   const expires = Date.now() + ttlSecs * 1000;
 
+  // Small JPEG thumbnail the browser generates from the local file while uploading.
+  const posterKey = posterKeyFor(key);
+  const posterUploadUrl = await getPresignedUploadUrl(posterKey, "image/jpeg", ttlSecs);
+
   if (fileSize > MULTIPART_THRESHOLD) {
     const uploadId = await createMultipartUpload(key, contentType);
     const partCount = Math.ceil(fileSize / PART_SIZE);
@@ -1420,12 +1546,12 @@ async function handleUploadUrl(campaignId: string, shop: ShopInfo, loggedInCusto
       Array.from({ length: partCount }, (_, i) => getPresignedPartUrl(key, uploadId, i + 1, ttlSecs)),
     );
     const token = signUpload([shop.id, campaignId, pre.customer.id, key, uploadId, String(expires)]);
-    return uploadJson({ mode: "multipart", key, uploadId, partSize: PART_SIZE, partUrls, contentType, expires, token });
+    return uploadJson({ mode: "multipart", key, uploadId, partSize: PART_SIZE, partUrls, contentType, expires, token, posterUploadUrl });
   }
 
   const uploadUrl = await getPresignedUploadUrl(key, contentType, ttlSecs);
   const token = signUpload([shop.id, campaignId, pre.customer.id, key, "", String(expires)]);
-  return uploadJson({ mode: "single", uploadUrl, key, uploadId: "", contentType, expires, token });
+  return uploadJson({ mode: "single", uploadUrl, key, uploadId: "", contentType, expires, token, posterUploadUrl });
 }
 
 async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedInCustomerId: string, request: Request) {
@@ -1437,6 +1563,8 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
     expires?: number;
     message?: string;
     subscriptionId?: string;
+    hasPoster?: boolean;
+    durationSecs?: number;
   };
   try {
     body = await request.json();
@@ -1480,12 +1608,27 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
     return uploadError("too_large", 413);
   }
 
+  // Poster is optional (the browser may not manage to grab a frame) — only store
+  // it if it really landed in R2.
+  let thumbnailUrl: string | null = null;
+  if (body.hasPoster) {
+    const posterKey = posterKeyFor(key);
+    const poster = await headObject(posterKey).catch(() => null);
+    if (poster && poster.size > 0 && poster.size < 5 * 1024 * 1024) thumbnailUrl = `r2://${posterKey}`;
+  }
+  const durationSecs =
+    Number.isFinite(Number(body.durationSecs)) && Number(body.durationSecs) > 0
+      ? Math.round(Number(body.durationSecs))
+      : null;
+
   await prisma.submission.create({
     data: {
       campaignId,
       customerId: pre.customer.id,
       contentType: pre.campaign.contentType,
       contentUrl: `r2://${key}`,
+      thumbnailUrl,
+      durationSecs,
       fileBytes: head.size,
       description: (body.message || "").slice(0, 2000) || null,
       subscriptionId: body.subscriptionId || null,

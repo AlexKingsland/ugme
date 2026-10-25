@@ -1,5 +1,5 @@
 import * as React from "react";
-import { peekLoaded, releaseMedia, retainMedia } from "./media-loader";
+import { peekLoaded, preloadMedia, releaseMedia, retainMedia } from "./media-loader";
 import { MediaOverlay } from "./overlay";
 import { InfiniteScene, type SceneHandlers } from "./scene";
 import type { CanvasOptions, MediaItem, SelectedMedia } from "./types";
@@ -39,6 +39,8 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
     options.media ? { status: "ready", media: options.media } : { status: "loading" },
   );
   const [selected, setSelected] = React.useState<SelectedMedia | null>(null);
+  const [revealed, setRevealed] = React.useState(false);
+  const [progress, setProgress] = React.useState<{ loaded: number; total: number } | null>(null);
   const [hintVisible, setHintVisible] = React.useState(options.showHint !== false);
   const [full, setFull] = React.useState(false);
 
@@ -51,13 +53,30 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
   React.useEffect(() => {
     if (options.media) return;
     let alive = true;
-    fetchMedia(options.endpoint || "/apps/ugme/canvas", options.campaigns || [])
+    // The loader script usually started this request already (in parallel with
+    // downloading this bundle) — reuse it if so.
+    const prefetched = (root as HTMLElement & { __ugmeData?: Promise<{ items?: MediaItem[] }> | null }).__ugmeData;
+    (prefetched
+      ? prefetched.then((d) => d.items ?? []).catch(() => fetchMedia(options.endpoint || "/apps/ugme/canvas", options.campaigns || []))
+      : fetchMedia(options.endpoint || "/apps/ugme/canvas", options.campaigns || []))
       .then((media) => alive && setState({ status: "ready", media }))
       .catch((err) => alive && setState({ status: "error", message: String(err?.message || err) }));
     return () => {
       alive = false;
     };
   }, [options.endpoint, options.campaigns, options.media]);
+
+  // ── preload all thumbnails, then reveal the wall in one go ──
+  React.useEffect(() => {
+    if (state.status !== "ready" || !state.media.length) return;
+    let alive = true;
+    preloadMedia(state.media, (loaded, total) => alive && setProgress({ loaded, total })).then(
+      () => alive && setRevealed(true),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [state]);
 
   React.useEffect(() => {
     retainMedia();
@@ -151,13 +170,20 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
 
   return (
     <>
-      {state.status === "ready" && state.media.length > 0 && (
+      {state.status === "ready" && state.media.length > 0 && revealed && (
         <InfiniteScene media={state.media} background={background} handlers={handlers} />
       )}
 
-      {state.status === "loading" && (
+      {(state.status === "loading" || (state.status === "ready" && state.media.length > 0 && !revealed)) && (
         <div className="ugme-canvas__state">
-          <span className="ugme-canvas__spinner" />
+          <div className="ugme-canvas__loading">
+            <span className="ugme-canvas__spinner" />
+            {progress && progress.total > 8 && (
+              <span className="ugme-canvas__count">
+                {progress.loaded} / {progress.total}
+              </span>
+            )}
+          </div>
         </div>
       )}
       {state.status === "error" && (
@@ -179,7 +205,7 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
         </div>
       )}
 
-      {state.status === "ready" && state.media.length > 0 && (
+      {state.status === "ready" && state.media.length > 0 && revealed && (
         <>
           {options.showHint !== false && (
             <div className={`ugme-canvas__chip${hintVisible ? "" : " ugme-canvas__chip--hidden"}`}>{hint}</div>

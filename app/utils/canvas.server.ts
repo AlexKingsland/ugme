@@ -11,11 +11,10 @@
  *    merchant can pick campaigns from a list in the theme editor block settings.
  */
 import prisma from "../db.server";
-import { extractKeyFromContentUrl, getPresignedDownloadUrl } from "./r2.server";
+import { extractKeyFromContentUrl, getCacheableDownloadUrl } from "./r2.server";
 
 export const CANVAS_METAOBJECT_TYPE = "$app:ugme_campaign";
 const MAX_ITEMS = 300;
-const URL_TTL_SECS = 6 * 60 * 60; // presigned URLs valid for 6h
 
 export type CanvasItem = {
   id: string;
@@ -31,7 +30,8 @@ async function resolveUrl(url: string | null | undefined): Promise<string | null
   if (!url) return null;
   if (url === "r2://pending" || url.includes("placeholder.ugme.app")) return null;
   const key = extractKeyFromContentUrl(url);
-  if (key) return getPresignedDownloadUrl(key, URL_TTL_SECS);
+  // Stable-per-window URLs → browsers/CDN cache thumbnails & videos across page views
+  if (key) return getCacheableDownloadUrl(key);
   return url.startsWith("http") ? url : null;
 }
 
@@ -85,7 +85,7 @@ export async function canvasJsonResponse(shopId: string, url: URL): Promise<Resp
     return new Response(JSON.stringify({ items }), {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        // short cache: presigned URLs live for 6h, approvals show up within 5 min
+        // short cache: URLs are valid for 6h+, approvals show up within 5 min
         "Cache-Control": "public, max-age=300",
       },
     });

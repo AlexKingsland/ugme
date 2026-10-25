@@ -21,7 +21,8 @@
     "canvas:dev": "npm --prefix packages/canvas run dev",
     "canvas:build": "npm --prefix packages/canvas run build",
     "canvas:set-app-id": "node scripts/set-canvas-app-id.mjs",
-    "r2:cors": "node --env-file=.env --import tsx scripts/r2-cors.ts"
+    "r2:cors": "node --env-file=.env --import tsx scripts/r2-cors.ts",
+    "posters:backfill": "node --env-file=.env --import tsx scripts/backfill-posters.ts"
   },
   "type": "module",
   "engines": {

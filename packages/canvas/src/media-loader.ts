@@ -10,7 +10,12 @@
 import * as THREE from "three";
 import type { MediaItem } from "./types";
 
-const MAX_TEX = 512;
+// Longest side of each tile texture. Big enough to stay sharp when a tile is
+// zoomed to fill a phone screen; smaller on touch devices to respect GPU memory.
+const IS_TOUCH =
+  typeof navigator !== "undefined" &&
+  (navigator.maxTouchPoints > 0 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+const MAX_TEX = IS_TOUCH ? 800 : 1024; // posters are generated at 800px
 const FALLBACK_ASPECT: Record<MediaItem["type"], number> = { image: 1, video: 9 / 16 };
 
 export type LoadedMedia = {
@@ -47,7 +52,7 @@ function makeQueue(limit: number) {
       next();
     });
 }
-const imageQueue = makeQueue(6);
+const imageQueue = makeQueue(12); // thumbnails are small; HTTP/2 multiplexes them
 const videoQueue = makeQueue(2);
 
 // ── drawing ─────────────────────────────────────────────────────
@@ -85,14 +90,23 @@ function drawPlayBadge(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.restore();
 }
 
-/** True when a sampled grid of pixels is fully transparent (frame not decoded yet). */
-function isBlank(canvas: HTMLCanvasElement) {
+/**
+ * True when the frame isn't really there yet: fully transparent (desktop browsers
+ * before decode) or solid near-black (iOS Safari before decode).
+ */
+function isEmptyFrame(canvas: HTMLCanvasElement) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   const { width: w, height: h } = canvas;
   const data = ctx.getImageData(0, 0, w, h).data;
   const step = Math.max(4, Math.floor((w * h) / 400)) * 4;
-  for (let i = 3; i < data.length; i += step) if (data[i] !== 0) return false;
-  return true;
+  let maxLum = 0;
+  let opaque = false;
+  for (let i = 0; i < data.length; i += step) {
+    if (data[i + 3] !== 0) opaque = true;
+    const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+    if (lum > maxLum) maxLum = lum;
+  }
+  return !opaque || maxLum < 12;
 }
 
 function placeholderCanvas(item: MediaItem) {
@@ -104,8 +118,8 @@ function placeholderCanvas(item: MediaItem) {
   canvas.height = h;
   const ctx = canvas.getContext("2d")!;
   const g = ctx.createLinearGradient(0, 0, w, h);
-  g.addColorStop(0, "#2a2a2a");
-  g.addColorStop(1, "#111");
+  g.addColorStop(0, "#d9d9d6");
+  g.addColorStop(1, "#bdbdb8");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
   if (item.type === "video") drawPlayBadge(ctx, w, h);
@@ -118,7 +132,7 @@ function toTexture(canvas: HTMLCanvasElement) {
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.generateMipmaps = true;
-  tex.anisotropy = 4;
+  tex.anisotropy = 8;
   tex.needsUpdate = true;
   return tex;
 }
@@ -135,19 +149,34 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-function grabVideoFrame(url: string, timeoutMs = 15000): Promise<HTMLCanvasElement> {
+function grabVideoFrame(url: string, timeoutMs = 20000): Promise<HTMLCanvasElement> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     video.crossOrigin = "anonymous";
+    // iOS Safari only decodes frames for videos that are muted + inline and, in
+    // practice, attached to the page and briefly played. Without that, drawImage()
+    // returns a solid BLACK frame (not a transparent one).
     video.muted = true;
+    video.defaultMuted = true;
+    video.setAttribute("muted", "");
     video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
     video.preload = "auto";
+    video.style.cssText =
+      "position:fixed;left:-10000px;top:0;width:360px;height:640px;opacity:0;pointer-events:none;";
+    document.body.appendChild(video);
+
     let done = false;
+    let attempts = 0;
+    let seekTo = 0.5;
     const cleanup = () => {
       done = true;
       clearTimeout(timer);
+      video.pause();
       video.removeAttribute("src");
       video.load();
+      video.remove();
     };
     const fail = (why: string) => {
       if (done) return;
@@ -155,48 +184,74 @@ function grabVideoFrame(url: string, timeoutMs = 15000): Promise<HTMLCanvasEleme
       reject(new Error(`${why}: ${url}`));
     };
     const timer = setTimeout(() => fail("poster timeout"), timeoutMs);
-    video.addEventListener("loadedmetadata", () => {
-      const t = Number.isFinite(video.duration) ? Math.min(0.5, video.duration / 3) : 0.1;
-      video.currentTime = t;
-    });
-    // 'seeked' can fire before the frame is actually decoded (drawImage then
-    // yields a blank canvas). Wait for decoded data + a presented frame, and
-    // verify the pixels aren't empty before accepting the poster.
-    let attempts = 0;
+
     const tryDraw = () => {
       if (done) return;
+      let canvas: HTMLCanvasElement;
       try {
-        const canvas = drawToCanvas(video, video.videoWidth || 720, video.videoHeight || 1280, false);
-        if (isBlank(canvas) && attempts++ < 8) {
-          setTimeout(tryDraw, 120);
+        canvas = drawToCanvas(video, video.videoWidth || 720, video.videoHeight || 1280, false);
+      } catch (e) {
+        return fail(`poster draw failed (CORS) ${String(e)}`);
+      }
+      if (isEmptyFrame(canvas)) {
+        if (attempts++ < 10) {
+          // Not decoded yet (or a genuinely dark first frame): wait, and every few
+          // tries step a little further into the clip.
+          if (attempts % 3 === 0 && Number.isFinite(video.duration)) {
+            seekTo = Math.min(seekTo + 0.75, Math.max(0, video.duration - 0.1));
+            video.currentTime = seekTo;
+            return; // 'seeked' will call whenFrameReady again
+          }
+          setTimeout(tryDraw, 150);
           return;
         }
-        drawPlayBadge(canvas.getContext("2d")!, canvas.width, canvas.height);
-        cleanup();
-        resolve(canvas);
-      } catch (e) {
-        fail(`poster draw failed (CORS?) ${String(e)}`);
+        return fail("poster frame stayed blank/black");
       }
+      drawPlayBadge(canvas.getContext("2d")!, canvas.width, canvas.height);
+      cleanup();
+      resolve(canvas);
     };
+
     const whenFrameReady = () => {
+      if (done) return;
       const v = video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
       if (v.requestVideoFrameCallback) {
         v.requestVideoFrameCallback(() => tryDraw());
-        // rVFC only fires when a frame is presented; nudge it and keep a fallback
-        setTimeout(tryDraw, 400);
+        setTimeout(tryDraw, 400); // rVFC may not fire for a paused seek; keep a fallback
       } else {
-        setTimeout(tryDraw, 60);
+        setTimeout(tryDraw, 80);
       }
     };
+
     video.addEventListener("seeked", () => {
       if (done) return;
       if (video.readyState >= 2) whenFrameReady();
       else video.addEventListener("loadeddata", whenFrameReady, { once: true });
     });
+
+    video.addEventListener("loadedmetadata", () => {
+      if (done) return;
+      seekTo = Number.isFinite(video.duration) ? Math.min(0.5, video.duration / 3) : 0.1;
+      const seek = () => {
+        if (done) return;
+        video.pause();
+        video.currentTime = seekTo;
+      };
+      // Kick the decoder (needed on iOS), then seek to the poster time.
+      const p = video.play();
+      if (p && typeof p.then === "function") {
+        p.then(() => setTimeout(seek, 50)).catch(seek);
+      } else {
+        seek();
+      }
+    });
     video.addEventListener("error", () => fail("video error"));
     video.src = url;
+    video.load();
   });
 }
+
+const isMobile = () => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 
 const MAX_FALLBACK_BYTES = 80 * 1024 * 1024;
 
@@ -224,7 +279,11 @@ async function load(item: MediaItem): Promise<LoadedMedia> {
     } else {
       canvas = await videoQueue(() =>
         grabVideoFrame(item.src).catch(async (err) => {
-          // Usually a stale non-CORS copy in the HTTP cache: re-fetch bypassing it.
+          // Stale non-CORS copy in the HTTP cache: re-fetch bypassing it. Only for
+          // CORS-type failures, and never on phones (would download the whole file).
+          const msg = String(err?.message || err);
+          const corsLike = msg.includes("CORS") || msg.includes("video error");
+          if (!corsLike || isMobile()) throw err;
           console.warn("[ugme-canvas] poster retry without cache", err);
           return grabVideoFrameUncached(item.src);
         }),
@@ -277,4 +336,34 @@ function disposeAll() {
   for (const p of cache.values()) p.then((m) => m.texture.dispose()).catch(() => {});
   cache.clear();
   loadedSync.clear();
+}
+
+/**
+ * Warm every item's texture before the wall is revealed, so tiles appear
+ * together instead of popping in one by one. Resolves once everything with a
+ * ready-made thumbnail is loaded (fast), giving slower client-side video frame
+ * grabs a short extra grace period — and never waits longer than `maxWaitMs`.
+ */
+export function preloadMedia(
+  items: MediaItem[],
+  onProgress: (loaded: number, total: number) => void,
+  maxWaitMs = 6000,
+): Promise<void> {
+  const total = items.length;
+  let settled = 0;
+  const track = (item: MediaItem) =>
+    getMedia(item)
+      .then((m) => rememberLoaded(item, m))
+      .finally(() => onProgress(++settled, total));
+
+  const fast = items.filter((i) => i.type === "image" || !!i.thumb);
+  const slow = items.filter((i) => !(i.type === "image" || !!i.thumb));
+  const fastDone = Promise.all(fast.map(track));
+  const slowDone = Promise.all(slow.map(track));
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  return Promise.race([
+    fastDone.then(() => (slow.length ? Promise.race([slowDone, sleep(1500)]) : undefined)).then(() => undefined),
+    sleep(maxWaitMs),
+  ]);
 }

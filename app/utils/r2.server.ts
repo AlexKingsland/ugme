@@ -186,3 +186,31 @@ export async function completeMultipartUpload(
 export async function abortMultipartUpload(key: string, uploadId: string): Promise<void> {
   await r2Client.send(new AbortMultipartUploadCommand({ Bucket: R2_BUCKET_NAME, Key: key, UploadId: uploadId }));
 }
+
+// ── Posters (small thumbnails stored next to each upload) ──
+
+/** Poster object key for an uploaded file: same folder, `poster.jpg`. */
+export function posterKeyFor(contentKey: string): string {
+  const slash = contentKey.lastIndexOf("/");
+  return `${contentKey.slice(0, slash + 1)}poster.jpg`;
+}
+
+const STABLE_WINDOW_MS = 6 * 60 * 60 * 1000; // URLs stay identical for 6h windows
+
+/**
+ * Presigned GET URL that is *identical* for every request in the same 6-hour
+ * window (signing date is rounded down), so browsers and CDNs can cache the
+ * file instead of re-downloading it on every page view. Valid for 6–12h.
+ */
+export async function getCacheableDownloadUrl(key: string, maxAgeSecs = 6 * 60 * 60): Promise<string> {
+  const windowStart = new Date(Math.floor(Date.now() / STABLE_WINDOW_MS) * STABLE_WINDOW_MS);
+  const command = new GetObjectCommand({
+    Bucket: R2_BUCKET_NAME,
+    Key: key,
+    ResponseCacheControl: `public, max-age=${maxAgeSecs}, immutable`,
+  });
+  return getSignedUrl(r2Client, command, {
+    expiresIn: (2 * STABLE_WINDOW_MS) / 1000,
+    signingDate: windowStart,
+  });
+}

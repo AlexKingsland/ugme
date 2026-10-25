@@ -525,7 +525,9 @@ export function InfiniteScene({
   background: string;
   handlers: SceneHandlers;
 }) {
-  const dpr = Math.min(window.devicePixelRatio || 1, isTouchDevice() ? 1.25 : 1.5);
+  // Render at up to 2x pixel density (phones are 3x). The original 1.25x cap on
+  // touch made every tile look soft on iPhones.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   return (
     <Canvas
       className="ugme-canvas__gl"

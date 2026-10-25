@@ -16,6 +16,8 @@ export const CSS = `
 .ugme-canvas__state{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#6b7280;font-size:14px}
 .ugme-canvas__state b{display:block;color:#111;font-size:15px;margin-bottom:4px}
 .ugme-canvas__spinner{display:block;width:22px;height:22px;border-radius:50%;border:2px solid rgba(0,0,0,.12);border-top-color:#111;animation:ugme-spin .8s linear infinite}
+.ugme-canvas__loading{display:flex;flex-direction:column;align-items:center;gap:10px}
+.ugme-canvas__count{font-size:12px;color:#9ca3af;font-variant-numeric:tabular-nums}
 @keyframes ugme-spin{to{transform:rotate(360deg)}}
 
 .ugme-overlay{position:fixed;inset:0;z-index:2147483600;display:grid;place-items:center;padding:24px;
