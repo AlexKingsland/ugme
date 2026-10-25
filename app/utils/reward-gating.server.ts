@@ -11,19 +11,17 @@
 
 import prisma from "../db.server";
 import type { SubscriptionProvider } from "@prisma/client";
+import { getProviderAdapter } from "./providers";
 
 // ── Providers with single-discount limitation ──────────────────────
-// Add providers here as we discover per-address (or per-subscription)
-// discount limits. Each entry means: "only one UGME reward can be active
-// at a time for a customer on this provider."
-
-export const SINGLE_DISCOUNT_PROVIDERS: ReadonlySet<SubscriptionProvider> =
-  new Set<SubscriptionProvider>(["RECHARGE"]);
+// Declared by each provider adapter (capabilities.subscriptionDiscount
+// .stacksWithExisting === false means "only one UGME reward can be active at
+// a time for a customer on this provider").
 
 export function isSingleDiscountProvider(
   provider: SubscriptionProvider
 ): boolean {
-  return SINGLE_DISCOUNT_PROVIDERS.has(provider);
+  return !getProviderAdapter(provider).capabilities.subscriptionDiscount.stacksWithExisting;
 }
 
 // ── Gating result ──────────────────────────────────────────────────
@@ -45,7 +43,7 @@ export interface GatingWarning {
  * whether to submit knowing their current reward will be replaced on
  * approval.
  *
- * Only checks for providers in SINGLE_DISCOUNT_PROVIDERS. Other
+ * Only checks single-discount providers (see isSingleDiscountProvider). Other
  * providers return { hasActiveReward: false } immediately.
  */
 export async function checkRewardGating(params: {

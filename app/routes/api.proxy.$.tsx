@@ -4,7 +4,7 @@ import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
 import crypto from "crypto";
 import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl, getPresignedUploadUrl, headObject, posterKeyFor, createMultipartUpload, getPresignedPartUrl, completeMultipartUpload, abortMultipartUpload } from "../utils/r2.server";
-import { verifyActiveSubscriber, getRechargeCustomer, getActiveSubscriptionsForProduct, applyRewardToNextCharge } from "../utils/recharge.server";
+import { getProviderAdapter } from "../utils/providers";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { checkRewardGating } from "../utils/reward-gating.server";
 import { canvasJsonResponse } from "../utils/canvas.server";
@@ -430,13 +430,14 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
   }
 
   // ── Product-specific subscription verification (Recharge) ──
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId && loggedInCustomerId) {
     try {
-      const rechargeCustomer = await getRechargeCustomer(
+      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
+        { apiKey: shop.providerApiKey },
         loggedInCustomerId,
-        shop.providerApiKey || undefined
+        campaign.productId
       );
-      if (!rechargeCustomer) {
+      if (subscriber.status === "no_customer") {
         const body = `
           <div style="text-align: center; padding: 40px 0;">
             <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
@@ -449,12 +450,7 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
         return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
 
-      const matchingSubs = await getActiveSubscriptionsForProduct(
-        rechargeCustomer.id,
-        campaign.productId,
-        shop.providerApiKey || undefined
-      );
-      if (matchingSubs.length === 0) {
+      if (subscriber.status === "no_matching_subscription") {
         const body = `
           <div style="text-align: center; padding: 40px 0;">
             <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
@@ -613,13 +609,14 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   // ── Product-specific subscription verification (Recharge) ──
   let matchingSubscriptionId: string | null = null;
 
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId && loggedInCustomerId) {
     try {
-      const rechargeCustomer = await getRechargeCustomer(
+      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
+        { apiKey: shop.providerApiKey },
         customer.shopifyCustomerId || loggedInCustomerId,
-        shop.providerApiKey || undefined
+        campaign.productId
       );
-      if (!rechargeCustomer) {
+      if (subscriber.status === "no_customer") {
         const body = `
           <div style="text-align: center; padding: 40px 0;">
             <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
@@ -632,13 +629,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
 
-      const matchingSubs = await getActiveSubscriptionsForProduct(
-        rechargeCustomer.id,
-        campaign.productId,
-        shop.providerApiKey || undefined
-      );
-
-      if (matchingSubs.length === 0) {
+      if (subscriber.status === "no_matching_subscription") {
         const body = `
           <div style="text-align: center; padding: 40px 0;">
             <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
@@ -652,7 +643,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       }
 
       // Auto-select if only one, otherwise we'll show a picker
-      matchingSubscriptionId = String(matchingSubs[0].id);
+      if (subscriber.status === "eligible") matchingSubscriptionId = subscriber.subscriptionIds[0];
     } catch (err) {
       console.error("[UGME] Recharge product subscription check failed:", err);
       // Fail open
@@ -1305,22 +1296,14 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
   // ── Product-specific subscription verification (Recharge) ──
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId && loggedInCustomerId) {
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId && loggedInCustomerId) {
     try {
-      const rechargeCustomer = await getRechargeCustomer(
+      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
+        { apiKey: shop.providerApiKey },
         loggedInCustomerId,
-        shop.providerApiKey || undefined
+        campaign.productId
       );
-      if (!rechargeCustomer) {
-        return errorRedirect(shop.shopDomain, campaignId, "no_subscription");
-      }
-
-      const matchingSubs = await getActiveSubscriptionsForProduct(
-        rechargeCustomer.id,
-        campaign.productId,
-        shop.providerApiKey || undefined
-      );
-      if (matchingSubs.length === 0) {
+      if (subscriber.status !== "eligible") {
         return errorRedirect(shop.shopDomain, campaignId, "no_subscription");
       }
     } catch (err) {
@@ -1456,12 +1439,14 @@ async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInC
 
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && shop.subscriptionProvider === "RECHARGE" && campaign.productId) {
+  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId) {
     try {
-      const rechargeCustomer = await getRechargeCustomer(loggedInCustomerId, shop.providerApiKey || undefined);
-      if (!rechargeCustomer) return { ok: false as const, response: uploadError("no_subscription", 403) };
-      const subs = await getActiveSubscriptionsForProduct(rechargeCustomer.id, campaign.productId, shop.providerApiKey || undefined);
-      if (subs.length === 0) return { ok: false as const, response: uploadError("no_subscription", 403) };
+      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
+        { apiKey: shop.providerApiKey },
+        loggedInCustomerId,
+        campaign.productId
+      );
+      if (subscriber.status !== "eligible") return { ok: false as const, response: uploadError("no_subscription", 403) };
     } catch (err) {
       console.error("[UGME] Recharge check (direct upload) failed:", err);
       // Fail open, same as the multipart path

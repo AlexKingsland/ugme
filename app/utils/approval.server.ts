@@ -1,9 +1,5 @@
 import prisma from "../db.server";
-import {
-  applyRewardToNextCharge,
-  clearAddressDiscounts,
-  deleteDiscount,
-} from "./recharge.server";
+import { getProviderAdapter } from "./providers";
 import {
   isSingleDiscountProvider,
   findActiveRewardToReplace,
@@ -21,9 +17,10 @@ export interface ApprovalResult {
  * Shared approval logic: approve a submission and apply the reward.
  * Called from both the library list view and the detail view.
  *
- * For single-discount providers (e.g. Recharge), if the customer already
- * has an active reward, it is replaced: the old discount is cleared from
- * the address, deleted, and the old reward record is marked CREATED (no
+ * Provider-specific work goes through the subscription provider adapter
+ * (app/utils/providers). For single-discount providers (e.g. Recharge), if
+ * the customer already has an active reward, it is replaced: the adapter
+ * removes the old discount and the old reward record is marked CREATED (no
  * longer applied). Then the new discount is applied.
  */
 export async function approveSubmission(params: {
@@ -66,7 +63,10 @@ export async function approveSubmission(params: {
   let discountCode: string | null = null;
   let replacedRewardId: string | undefined;
 
-  if (shop.providerConnected && shop.subscriptionProvider === "RECHARGE") {
+  const provider = getProviderAdapter(shop.subscriptionProvider);
+  const providerCtx = { apiKey: shop.providerApiKey };
+
+  if (shop.providerConnected && provider.capabilities.subscriptionDiscount.supported) {
     if (submission.customer.shopifyCustomerId && submission.subscriptionId) {
       try {
         // ── Replace existing reward if on a single-discount provider ──
@@ -83,35 +83,11 @@ export async function approveSubmission(params: {
                 `(discount ${existing.externalDiscountId}) for new submission ${submissionId}`
             );
 
-            // Clear discount from address first
-            if (existing.rechargeChargeId) {
-              try {
-                await clearAddressDiscounts(
-                  parseInt(existing.rechargeChargeId, 10),
-                  shop.providerApiKey || undefined
-                );
-              } catch (err) {
-                console.warn(
-                  "[UGME] Could not clear address discounts (may already be expired):",
-                  err
-                );
-              }
-            }
-
-            // Delete the old discount from Recharge
-            if (existing.externalDiscountId) {
-              try {
-                await deleteDiscount(
-                  parseInt(existing.externalDiscountId, 10),
-                  shop.providerApiKey || undefined
-                );
-              } catch (err) {
-                console.warn(
-                  "[UGME] Could not delete old discount (may already be gone):",
-                  err
-                );
-              }
-            }
+            // Remove the old discount from the provider (best-effort)
+            await provider.removeSubscriptionReward(providerCtx, {
+              externalDiscountId: existing.externalDiscountId,
+              externalTargetId: existing.rechargeChargeId,
+            });
 
             // Mark old reward as replaced in our DB
             await prisma.reward.update({
@@ -124,10 +100,10 @@ export async function approveSubmission(params: {
         }
 
         // ── Apply the new reward ──
-        const result = await applyRewardToNextCharge({
+        const result = await provider.applySubscriptionReward(providerCtx, {
           shopifyCustomerId: submission.customer.shopifyCustomerId,
           shopifyProductId: submission.campaign.productId!,
-          rechargeSubscriptionId: parseInt(submission.subscriptionId, 10),
+          subscriptionId: submission.subscriptionId,
           campaignTitle: submission.campaign.title,
           submissionId,
           discountType: submission.campaign.discountType as
@@ -136,15 +112,14 @@ export async function approveSubmission(params: {
             | "PERCENTAGE",
           discountValue: submission.campaign.discountValue,
           rewardCycles: submission.campaign.rewardCycles,
-          token: shop.providerApiKey || undefined,
         });
 
         rewardStatus = "APPLIED";
-        externalDiscountId = String(result.discountId);
-        rechargeChargeId = String(result.addressId);
+        externalDiscountId = result.externalDiscountId;
+        rechargeChargeId = result.externalTargetId;
         discountCode = result.discountCode;
       } catch (err) {
-        console.error("[UGME] Recharge reward application failed:", err);
+        console.error(`[UGME] ${provider.displayName} reward application failed:`, err);
         rewardStatus = "FAILED";
       }
     }
