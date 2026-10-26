@@ -1131,14 +1131,14 @@
   "approve/code-percentage-expiry-min": {
     "result": {
       "rewardStatus": "APPLIED",
-      "discountCode": "UGME-PARITYCAMP-S1"
+      "discountCode": "WALL-PARITYCAMP-S1"
     },
     "calls": [
       {
         "method": "GRAPHQL",
         "path": "codeDiscountNodeByCode",
         "body": {
-          "code": "UGME-PARITYCAMP-S1"
+          "code": "WALL-PARITYCAMP-S1"
         }
       },
       {
@@ -1146,8 +1146,8 @@
         "path": "discountCodeBasicCreate",
         "body": {
           "basicCodeDiscount": {
-            "title": "UGME reward — Parity Campaign!",
-            "code": "UGME-PARITYCAMP-S1",
+            "title": "Social Wall reward — Parity Campaign!",
+            "code": "WALL-PARITYCAMP-S1",
             "startsAt": "<date>",
             "endsAt": "<date>",
             "customerSelection": {
@@ -1185,7 +1185,7 @@
         "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
         "rechargeChargeId": null,
         "rechargeSubscriptionId": null,
-        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountCode": "WALL-PARITYCAMP-S1",
         "discountProvider": "SHOPIFY_DISCOUNT_CODE",
         "cycles": 3,
         "failureReason": null,
@@ -1207,14 +1207,14 @@
   "approve/code-fixed": {
     "result": {
       "rewardStatus": "APPLIED",
-      "discountCode": "UGME-PARITYCAMP-S1"
+      "discountCode": "WALL-PARITYCAMP-S1"
     },
     "calls": [
       {
         "method": "GRAPHQL",
         "path": "codeDiscountNodeByCode",
         "body": {
-          "code": "UGME-PARITYCAMP-S1"
+          "code": "WALL-PARITYCAMP-S1"
         }
       },
       {
@@ -1222,8 +1222,8 @@
         "path": "discountCodeBasicCreate",
         "body": {
           "basicCodeDiscount": {
-            "title": "UGME reward — Parity Campaign!",
-            "code": "UGME-PARITYCAMP-S1",
+            "title": "Social Wall reward — Parity Campaign!",
+            "code": "WALL-PARITYCAMP-S1",
             "startsAt": "<date>",
             "endsAt": null,
             "customerSelection": {
@@ -1260,7 +1260,7 @@
         "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
         "rechargeChargeId": null,
         "rechargeSubscriptionId": null,
-        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountCode": "WALL-PARITYCAMP-S1",
         "discountProvider": "SHOPIFY_DISCOUNT_CODE",
         "cycles": 3,
         "failureReason": null,
@@ -1282,14 +1282,47 @@
   "approve/code-already-on-shopify-reused": {
     "result": {
       "rewardStatus": "APPLIED",
-      "discountCode": "UGME-PARITYCAMP-S1"
+      "discountCode": "WALL-PARITYCAMP-S1"
     },
     "calls": [
       {
         "method": "GRAPHQL",
         "path": "codeDiscountNodeByCode",
         "body": {
-          "code": "UGME-PARITYCAMP-S1"
+          "code": "WALL-PARITYCAMP-S1"
+        }
+      },
+      {
+        "method": "GRAPHQL",
+        "path": "discountCodeBasicCreate",
+        "body": {
+          "basicCodeDiscount": {
+            "title": "Social Wall reward — Parity Campaign!",
+            "code": "WALL-PARITYCAMP-S1",
+            "startsAt": "<date>",
+            "endsAt": null,
+            "customerSelection": {
+              "customers": {
+                "add": [
+                  "gid://shopify/Customer/777"
+                ]
+              }
+            },
+            "customerGets": {
+              "value": {
+                "discountAmount": {
+                  "amount": "6.00",
+                  "appliesOnEachItem": false
+                }
+              },
+              "items": {
+                "all": true
+              }
+            },
+            "minimumRequirement": null,
+            "usageLimit": 1,
+            "appliesOncePerCustomer": true
+          }
         }
       }
     ],
@@ -1299,10 +1332,10 @@
         "rewardType": "DISCOUNT_CODE",
         "status": "APPLIED",
         "applied": true,
-        "externalDiscountId": "gid://shopify/DiscountCodeNode/existing",
+        "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
         "rechargeChargeId": null,
         "rechargeSubscriptionId": null,
-        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountCode": "WALL-PARITYCAMP-S1",
         "discountProvider": "SHOPIFY_DISCOUNT_CODE",
         "cycles": 3,
         "failureReason": null,
@@ -1363,7 +1396,7 @@
         "method": "GRAPHQL",
         "path": "codeDiscountNodeByCode",
         "body": {
-          "code": "UGME-PARITYCAMP-S1"
+          "code": "WALL-PARITYCAMP-S1"
         }
       },
       {
@@ -1371,8 +1404,8 @@
         "path": "discountCodeBasicCreate",
         "body": {
           "basicCodeDiscount": {
-            "title": "UGME reward — Parity Campaign!",
-            "code": "UGME-PARITYCAMP-S1",
+            "title": "Social Wall reward — Parity Campaign!",
+            "code": "WALL-PARITYCAMP-S1",
             "startsAt": "<date>",
             "endsAt": null,
             "customerSelection": {
@@ -1458,7 +1491,7 @@
   "retry/failed-code-then-succeeds": {
     "result": {
       "status": "APPLIED",
-      "discountCode": "UGME-PARITYCAMP-S1",
+      "discountCode": "WALL-PARITYCAMP-S1",
       "email": {
         "status": "sent"
       }
@@ -1468,7 +1501,7 @@
         "method": "GRAPHQL",
         "path": "codeDiscountNodeByCode",
         "body": {
-          "code": "UGME-PARITYCAMP-S1"
+          "code": "WALL-PARITYCAMP-S1"
         }
       },
       {
@@ -1476,8 +1509,8 @@
         "path": "discountCodeBasicCreate",
         "body": {
           "basicCodeDiscount": {
-            "title": "UGME reward — Parity Campaign!",
-            "code": "UGME-PARITYCAMP-S1",
+            "title": "Social Wall reward — Parity Campaign!",
+            "code": "WALL-PARITYCAMP-S1",
             "startsAt": "<date>",
             "endsAt": null,
             "customerSelection": {
@@ -1511,7 +1544,7 @@
         "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
         "rechargeChargeId": null,
         "rechargeSubscriptionId": null,
-        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountCode": "WALL-PARITYCAMP-S1",
         "discountProvider": "SHOPIFY_DISCOUNT_CODE",
         "cycles": 3,
         "failureReason": null,
@@ -1583,7 +1616,7 @@
         "externalDiscountId": "gid://shopify/DiscountCodeNode/1",
         "rechargeChargeId": null,
         "rechargeSubscriptionId": null,
-        "discountCode": "UGME-PARITYCAMP-S1",
+        "discountCode": "WALL-PARITYCAMP-S1",
         "discountProvider": "SHOPIFY_DISCOUNT_CODE",
         "cycles": 3,
         "failureReason": null,

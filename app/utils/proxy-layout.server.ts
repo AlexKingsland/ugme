@@ -1,3 +1,4 @@
+import { PROXY_BASE } from "./proxy-path";
 /**
  * Shared HTML shell for app proxy pages.
  * These pages render on the storefront, outside of Shopify admin,
@@ -272,7 +273,7 @@ export function proxyLayout({
 <body>
   <div class="ugme-shell">
     <header class="ugme-header">
-      <a href="/apps/ugme${shopParam ? `?shop=${escapeHtml(shopParam)}` : ""}" class="ugme-header-brand">
+      <a href="${PROXY_BASE}${shopParam ? `?shop=${escapeHtml(shopParam)}` : ""}" class="ugme-header-brand">
         ${logoUrl
           ? `<img src="${escapeHtml(logoUrl)}" alt="" class="ugme-header-logo" />`
           : `<div class="ugme-header-dot"></div>`
@@ -286,7 +287,6 @@ export function proxyLayout({
     </main>
     <footer class="ugme-footer">
       ${footerHtml}
-      Powered by <a href="https://ugme.app" target="_blank" rel="noopener">UG-ME</a>
     </footer>
   </div>
 
@@ -298,23 +298,24 @@ export function proxyLayout({
         <button class="ugme-menu-close" aria-label="Close menu" onclick="document.getElementById('ugmeMenu').classList.remove('open')">✕</button>
       </div>
       <nav class="ugme-menu-nav">
-        <a href="/apps/ugme${shopParam ? `?shop=${escapeHtml(shopParam)}` : ""}" class="ugme-menu-link">
-          <span class="ugme-menu-link-icon">📋</span>
-          Campaigns
+        <a href="${PROXY_BASE}${shopParam ? `?shop=${escapeHtml(shopParam)}` : ""}" class="ugme-menu-link">
+          <span class="ugme-menu-link-icon">🧱</span>
+          Social Walls
         </a>
-        <a href="/apps/ugme/account${shopParam ? `?shop=${escapeHtml(shopParam)}` : ""}" class="ugme-menu-link">
+        <a href="${PROXY_BASE}/account${shopParam ? `?shop=${escapeHtml(shopParam)}` : ""}" class="ugme-menu-link">
           <span class="ugme-menu-link-icon">📹</span>
-          My submissions
+          My posts
         </a>
         <hr class="ugme-menu-divider" />
+        <a href="https://${shopParam || "store"}/" class="ugme-menu-link">
+          <span class="ugme-menu-link-icon">🛍️</span>
+          Back to store
+        </a>
         <a href="https://${shopParam || "store"}/account" class="ugme-menu-link">
           <span class="ugme-menu-link-icon">👤</span>
           My account
         </a>
       </nav>
-      <div class="ugme-menu-footer">
-        Powered by UG-ME
-      </div>
     </div>
   </div>
 </body>

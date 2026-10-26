@@ -4,9 +4,11 @@
  * retry script (scripts/retry-rewards.ts). Safe to call repeatedly:
  * an APPLIED reward is never re-applied.
  *
+ *   NONE                  → nothing to deliver; the post is featured on the wall
  *   DISCOUNT_CODE         → single-use Shopify discount code for the customer
- *   SUBSCRIPTION_DISCOUNT → discount on the customer's subscription via the
- *                           provider adapter (app/utils/providers)
+ *   STORE_CREDIT          → Shopify store credit on the customer's account
+ *   SUBSCRIPTION_DISCOUNT → legacy (no longer offered): discount on the
+ *                           customer's subscription via the provider adapter
  *
  * Every attempt records status + failureReason + attemptCount on the Reward
  * row, so stuck rewards can be found and retried by us (not the merchant).
@@ -17,6 +19,7 @@ import { createCustomerDiscountCode, rewardCodeFor } from "./discount-codes.serv
 import { getProviderAdapter, type AdminGraphqlClient } from "./providers";
 import { findActiveRewardToReplace, isSingleDiscountProvider } from "./reward-gating.server";
 import { sendRewardDeliveredEmail, type NotifyResult } from "./email/notifications.server";
+import { creditStoreCredit, StoreCreditError } from "./store-credit.server";
 
 export interface RewardShop {
   id: string;
@@ -44,6 +47,7 @@ type Fields = {
   discountCode?: string | null;
   discountProvider?: string | null;
   expiresAt?: Date | null;
+  storeCreditAmount?: number | null;
 };
 
 class RewardFailure extends Error {}
@@ -83,7 +87,40 @@ export async function fulfillReward(params: {
   let fields: Fields = {};
 
   try {
-    if (campaign.rewardType === "DISCOUNT_CODE") {
+    if (campaign.rewardType === "NONE") {
+      // ── Featured only — nothing to deliver ──────────────────
+      outcome = { status: "APPLIED" };
+    } else if (campaign.rewardType === "STORE_CREDIT") {
+      // ── Shopify store credit ────────────────────────────────
+      const amount = Number(campaign.storeCreditAmount || 0);
+      if (!(amount > 0)) fail("Wall campaign has no store credit amount set.");
+      if (!submission.customer.shopifyCustomerId) fail("Customer has no Shopify customer ID.");
+      if (!admin) fail("Shopify admin access is unavailable for this attempt.");
+      // A previous attempt that may have reached Shopify must be checked by a human
+      if (submission.reward?.failureReason?.startsWith("UNCERTAIN")) {
+        fail(`${submission.reward.failureReason} (check the customer's store credit in Shopify, then clear failureReason to retry)`);
+      }
+      const expiresAt = campaign.storeCreditExpiryDays
+        ? new Date(Date.now() + campaign.storeCreditExpiryDays * 24 * 60 * 60 * 1000)
+        : null;
+      try {
+        const credited = await creditStoreCredit(admin!, {
+          shopifyCustomerId: submission.customer.shopifyCustomerId!,
+          amount,
+          expiresAt,
+        });
+        fields = {
+          externalDiscountId: credited.transactionId,
+          discountProvider: "SHOPIFY_STORE_CREDIT",
+          storeCreditAmount: credited.amount,
+          expiresAt,
+        };
+        outcome = { status: "APPLIED" };
+      } catch (err) {
+        if (err instanceof StoreCreditError) fail(err.uncertain ? `UNCERTAIN: ${err.message}` : err.message);
+        throw err;
+      }
+    } else if (campaign.rewardType === "DISCOUNT_CODE") {
       // ── Shopify discount code ───────────────────────────────
       // Configuration problems first (they need a human), then access problems
       const amount = Number(campaign.discountCodeAmount || 0);
@@ -98,7 +135,7 @@ export async function fulfillReward(params: {
 
       const created = await createCustomerDiscountCode(admin!, {
         code,
-        title: `UGME reward — ${campaign.title}`,
+        title: `Social Wall reward — ${campaign.title}`,
         shopifyCustomerId: submission.customer.shopifyCustomerId!,
         valueType,
         amount,
@@ -191,7 +228,13 @@ export async function fulfillReward(params: {
     outcome = { status: "FAILED", reason };
     fields = {
       discountProvider:
-        campaign.rewardType === "DISCOUNT_CODE" ? "SHOPIFY_DISCOUNT_CODE" : shop.subscriptionProvider,
+        campaign.rewardType === "DISCOUNT_CODE"
+          ? "SHOPIFY_DISCOUNT_CODE"
+          : campaign.rewardType === "STORE_CREDIT"
+            ? "SHOPIFY_STORE_CREDIT"
+            : campaign.rewardType === "NONE"
+              ? null
+              : shop.subscriptionProvider,
     };
   }
 

@@ -1,6 +1,10 @@
 /**
  * Internal: find approved submissions whose reward didn't go through and try
- * again. For us (UGME), not for merchants.
+ * again. For us (the Social Wall team), not for merchants.
+ *
+ * Store credit failures marked "UNCERTAIN" (the request may have reached
+ * Shopify) are NOT retried automatically: check the customer's store credit in
+ * Shopify, then clear Reward.failureReason for that submission and re-run.
  *
  *   npm run rewards:retry -- --dry-run          # list problem rewards, change nothing
  *   npm run rewards:retry                       # retry all of them
@@ -67,7 +71,13 @@ const problems = await prisma.submission.findMany({
       { reward: { status: { in: ["CREATED", "FAILED"] } } },
       // Delivered but never emailed (skip unusable rows: code rewards with no code, customers with no email)
       {
-        reward: { status: "APPLIED", OR: [{ rewardType: "SUBSCRIPTION_DISCOUNT" }, { discountCode: { not: null } }] },
+        reward: {
+          status: "APPLIED",
+          OR: [
+            { rewardType: { in: ["SUBSCRIPTION_DISCOUNT", "NONE", "STORE_CREDIT"] } },
+            { discountCode: { not: null } },
+          ],
+        },
         customer: { email: { not: "" } }, // narrowed per submission below
       },
     ],
@@ -106,17 +116,20 @@ for (const p of problems) {
 const tally = { APPLIED: 0, FAILED: 0, skipped: 0, emailed: 0, emailFailed: 0 };
 for (const [shopDomain, subs] of byShop) {
   const shop = subs[0].campaign.shop;
-  const needsAdmin = subs.some((s) => s.campaign.rewardType === "DISCOUNT_CODE");
+  const needsAdmin = subs.some((s) => s.campaign.rewardType === "DISCOUNT_CODE" || s.campaign.rewardType === "STORE_CREDIT");
   const access = needsAdmin ? await adminFor(shopDomain) : { scopes: [] as string[] };
   console.log(`── ${shopDomain}  (provider: ${shop.subscriptionProvider}${shop.providerConnected ? "" : ", not connected"})`);
   if (needsAdmin && access.problem) console.log(`   ⚠ Shopify admin: ${access.problem}`);
-  if (needsAdmin && !access.problem && !access.scopes.includes("write_discounts")) {
-    console.log(`   ⚠ Shopify admin: token scopes are [${access.scopes.join(", ")}] — missing write_discounts; re-approve the app's permissions`);
+  for (const [type, scope] of [["DISCOUNT_CODE", "write_discounts"], ["STORE_CREDIT", "write_store_credit_account_transactions"]] as const) {
+    if (needsAdmin && !access.problem && subs.some((s) => s.campaign.rewardType === type) && !access.scopes.includes(scope)) {
+      console.log(`   ⚠ Shopify admin: token scopes are [${access.scopes.join(", ")}] — missing ${scope}; re-approve the app's permissions`);
+    }
   }
 
   for (const s of subs) {
     const who = pad(s.customer.email || s.customer.shopifyCustomerId || s.customerId, 34);
-    const what = pad(`${s.campaign.rewardType === "DISCOUNT_CODE" ? "code" : "subscription"} · ${s.campaign.title}`, 40);
+    const kind = { DISCOUNT_CODE: "code", STORE_CREDIT: "credit", NONE: "featured", SUBSCRIPTION_DISCOUNT: "subscription" }[s.campaign.rewardType] ?? s.campaign.rewardType;
+    const what = pad(`${kind} · ${s.campaign.title}`, 40);
     const before = s.reward
       ? s.reward.status === "APPLIED"
         ? "APPLIED, email not sent"

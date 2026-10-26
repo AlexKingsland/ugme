@@ -6,6 +6,7 @@
 import prisma from "../../db.server";
 import { sendEmail } from "./mailer.server";
 import { submissionApprovedEmail, type RewardDetails } from "./templates";
+import { parseProducts } from "../wall-campaigns.server";
 
 export type NotifyResult = { status: "sent" | "already_sent" | "skipped" | "failed"; detail?: string };
 
@@ -40,23 +41,31 @@ export async function sendRewardDeliveredEmail(submissionId: string): Promise<No
     const c = sub.campaign;
     const shop = c.shop;
     const reward: RewardDetails =
-      c.rewardType === "DISCOUNT_CODE"
-        ? {
-            kind: "DISCOUNT_CODE" as const,
-            code: sub.reward.discountCode || "",
-            valueType: (c.discountCodeType === "FIXED_AMOUNT" ? "FIXED_AMOUNT" : "PERCENTAGE") as "FIXED_AMOUNT" | "PERCENTAGE",
-            amount: Number(c.discountCodeAmount || 0),
-            minimumSubtotal: c.discountCodeMinOrder,
-            expiresAt: sub.reward.expiresAt,
-          }
-        : {
-            kind: "SUBSCRIPTION_DISCOUNT" as const,
-            discountType: c.discountType as "FREE" | "PERCENTAGE" | "FIXED_AMOUNT",
-            value: c.discountValue,
-            cycles: sub.reward.cycles || c.rewardCycles,
-            frequency: (c.rewardFrequency || "MONTH") as "DAY" | "WEEK" | "MONTH",
-            code: sub.reward.discountCode,
-          };
+      c.rewardType === "NONE"
+        ? { kind: "FEATURED" as const }
+        : c.rewardType === "STORE_CREDIT"
+          ? {
+              kind: "STORE_CREDIT" as const,
+              amount: Number(sub.reward.storeCreditAmount ?? c.storeCreditAmount ?? 0),
+              expiresAt: sub.reward.expiresAt,
+            }
+          : c.rewardType === "DISCOUNT_CODE"
+            ? {
+                kind: "DISCOUNT_CODE" as const,
+                code: sub.reward.discountCode || "",
+                valueType: (c.discountCodeType === "FIXED_AMOUNT" ? "FIXED_AMOUNT" : "PERCENTAGE") as "FIXED_AMOUNT" | "PERCENTAGE",
+                amount: Number(c.discountCodeAmount || 0),
+                minimumSubtotal: c.discountCodeMinOrder,
+                expiresAt: sub.reward.expiresAt,
+              }
+            : {
+                kind: "SUBSCRIPTION_DISCOUNT" as const,
+                discountType: c.discountType as "FREE" | "PERCENTAGE" | "FIXED_AMOUNT",
+                value: c.discountValue,
+                cycles: sub.reward.cycles || c.rewardCycles,
+                frequency: (c.rewardFrequency || "MONTH") as "DAY" | "WEEK" | "MONTH",
+                code: sub.reward.discountCode,
+              };
     if (reward.kind === "DISCOUNT_CODE" && !reward.code) return { status: "skipped", detail: "no discount code recorded" };
 
     const brandName = shop.brandName || shop.shopDomain.replace(".myshopify.com", "");
@@ -67,7 +76,7 @@ export async function sendRewardDeliveredEmail(submissionId: string): Promise<No
       customerEmail: sub.customer.email,
       campaignTitle: c.title,
       contentType: sub.contentType,
-      productTitle: c.productTitle,
+      productTitle: parseProducts(sub.products)[0]?.title ?? c.productTitle,
       reward,
     });
 

@@ -1,27 +1,29 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { PROXY_BASE } from "../utils/proxy-path";
+import { USAGE_RIGHTS_INTRO, usageRightsClauses } from "../utils/usage-rights";
 import prisma from "../db.server";
 import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
 import crypto from "crypto";
 import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl, getPresignedUploadUrl, headObject, posterKeyFor, createMultipartUpload, getPresignedPartUrl, completeMultipartUpload, abortMultipartUpload } from "../utils/r2.server";
-import { getProviderAdapter } from "../utils/providers";
+import { unauthenticated } from "../shopify.server";
+import { parseProducts, verifyBuyer, wallRewardOffer, hasReward, type BuyerCheck, type ProductScope } from "../utils/wall-campaigns.server";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
-import { checkRewardGating } from "../utils/reward-gating.server";
 import { canvasJsonResponse } from "../utils/canvas.server";
 
 /**
  * App Proxy catch-all route.
- * Shopify forwards requests from {store}/apps/ugme/* to this handler.
+ * Shopify forwards requests from {store}/apps/social-wall/* to this handler.
  *
  * Routes:
- *   /apps/ugme                          → campaign library (C2.5)
- *   /apps/ugme/campaign/:id             → campaign detail (C3)
- *   /apps/ugme/campaign/:id/submit      → upload & submit (C9) — requires auth
- *   /apps/ugme/campaign/:id/submitted   → confirmation (C10) — requires auth
- *   POST /apps/ugme/campaign/:id/upload-url → presigned R2 PUT for direct browser upload (JSON)
- *   POST /apps/ugme/campaign/:id/complete   → confirm upload landed + create submission (JSON)
- *   /apps/ugme/account                  → my submissions (C11) — requires auth
- *   /apps/ugme/canvas?campaigns=a,b     → JSON media for the Social Wall theme block
+ *   /apps/social-wall                          → campaign library (C2.5)
+ *   /apps/social-wall/campaign/:id             → campaign detail (C3)
+ *   /apps/social-wall/campaign/:id/submit      → upload & submit (C9) — requires auth
+ *   /apps/social-wall/campaign/:id/submitted   → confirmation (C10) — requires auth
+ *   POST /apps/social-wall/campaign/:id/upload-url → presigned R2 PUT for direct browser upload (JSON)
+ *   POST /apps/social-wall/campaign/:id/complete   → confirm upload landed + create submission (JSON)
+ *   /apps/social-wall/account                  → my submissions (C11) — requires auth
+ *   /apps/social-wall/canvas?campaigns=a,b     → JSON media for the Social Wall theme block
  */
 
 type ShopInfo = {
@@ -46,32 +48,68 @@ function escapeHtml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function rewardText(campaign: {
-  rewardType?: string;
-  discountType: string;
-  discountValue: number;
-  rewardCycles: number;
-  rewardFrequency: string;
-  discountCodeAmount?: number | null;
-  discountCodeType?: string | null;
-  discountCodeExpiryDays?: number | null;
-}): string {
-  // Discount code reward type
-  if (campaign.rewardType === "DISCOUNT_CODE" && campaign.discountCodeAmount) {
-    const discountText = campaign.discountCodeType === "PERCENTAGE"
-      ? `${campaign.discountCodeAmount}% off`
-      : `$${campaign.discountCodeAmount} off`;
-    const expiryText = campaign.discountCodeExpiryDays
-      ? ` (expires in ${campaign.discountCodeExpiryDays} days)`
-      : "";
-    return `${discountText} discount code${expiryText}`;
+function rewardText(campaign: Parameters<typeof wallRewardOffer>[0]): string {
+  return wallRewardOffer(campaign);
+}
+
+/** Verified-buyer check for a wall campaign (uses the shop's offline Admin API session). */
+async function checkWallBuyer(
+  shop: ShopInfo,
+  campaign: { productScope: string; products: string },
+  shopifyCustomerId: string,
+): Promise<BuyerCheck> {
+  try {
+    const { admin } = await unauthenticated.admin(shop.shopDomain);
+    return await verifyBuyer(admin, shopifyCustomerId, campaign.productScope as ProductScope, parseProducts(campaign.products));
+  } catch (err) {
+    console.error("[wall] buyer check unavailable:", err);
+    return { status: "error", reason: err instanceof Error ? err.message : String(err) };
   }
-  // Subscription discount reward type (legacy default)
-  if (campaign.discountType === "FREE")
-    return `${campaign.rewardCycles} month${campaign.rewardCycles !== 1 ? "s" : ""} free`;
-  if (campaign.discountType === "FIXED_AMOUNT")
-    return `$${campaign.discountValue} off × ${campaign.rewardCycles}mo`;
-  return `${campaign.discountValue}% off × ${campaign.rewardCycles}mo`;
+}
+
+/** Spots left on a wall campaign with a submission limit (rejected submissions free a spot); null = no limit. */
+async function spotsLeft(campaign: { id: string; maxSubmissions: number | null }): Promise<number | null> {
+  if (campaign.maxSubmissions == null) return null;
+  const used = await prisma.submission.count({ where: { campaignId: campaign.id, status: { not: "REJECTED" } } });
+  return Math.max(0, campaign.maxSubmissions - used);
+}
+
+function spotsText(n: number) {
+  return n === 1 ? "1 spot left" : `${n} spots left`;
+}
+
+function productNames(campaign: { productScope: string; products: string }): string {
+  if (campaign.productScope === "ALL") return "our products";
+  const names = parseProducts(campaign.products).map((p) => p.title).filter(Boolean);
+  if (!names.length) return "this product";
+  if (names.length === 1) return names[0];
+  return names.slice(0, -1).join(", ") + " or " + names[names.length - 1];
+}
+
+function buyerGatePage(
+  check: Exclude<BuyerCheck, { status: "eligible" }>,
+  shop: ShopInfo,
+  brandName: string,
+  campaign: { productScope: string; products: string },
+): Response {
+  const notBuyer = check.status === "not_buyer";
+  const body = notBuyer
+    ? `
+      <div style="text-align: center; padding: 40px 0;">
+        <div style="font-size: 48px; margin-bottom: 16px;">🛍️</div>
+        <h1 style="font-size: 20px; margin-bottom: 8px;">This wall is for customers</h1>
+        <p style="color: var(--ugme-muted); margin-bottom: 24px; line-height: 1.6;">Only verified buyers of <strong>${escapeHtml(productNames(campaign))}</strong> can share to this wall. Once you've ordered, come back and share your video.</p>
+        <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--primary" style="display: inline-block; width: auto;">Shop now</a>
+      </div>`
+    : `
+      <div style="text-align: center; padding: 40px 0;">
+        <div style="font-size: 48px; margin-bottom: 16px;">⏳</div>
+        <h1 style="font-size: 20px; margin-bottom: 8px;">We couldn't check your order</h1>
+        <p style="color: var(--ugme-muted); margin-bottom: 24px; line-height: 1.6;">Something went wrong while confirming your purchase. Please try again in a moment.</p>
+        <a href="" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Try again</a>
+      </div>`;
+  const html = proxyLayout({ title: notBuyer ? "Customers only" : "Try again", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+  return new Response(html, { status: notBuyer ? 403 : 503, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
 /**
@@ -185,6 +223,24 @@ async function fetchCustomerEmail(shopDomain: string, accessToken: string, custo
   }
 }
 
+/** "Sam K." for customers who opt in to showing their name on the wall. */
+async function customerDisplayName(shop: ShopInfo, shopifyCustomerId: string): Promise<string | null> {
+  try {
+    const { admin } = await unauthenticated.admin(shop.shopDomain);
+    const gid = shopifyCustomerId.startsWith("gid://") ? shopifyCustomerId : `gid://shopify/Customer/${shopifyCustomerId}`;
+    const res = await admin.graphql(`#graphql
+      query WallCustomerName($id: ID!) { customer(id: $id) { firstName lastName } }`, { variables: { id: gid } });
+    const body: any = await res.json();
+    const first = String(body?.data?.customer?.firstName || "").trim();
+    const last = String(body?.data?.customer?.lastName || "").trim();
+    if (!first) return null;
+    return (last ? `${first} ${last[0].toUpperCase()}.` : first).slice(0, 40);
+  } catch (err) {
+    console.warn("[wall] couldn't read customer name:", err);
+    return null;
+  }
+}
+
 // ── Shared auth + shop resolution ───────────────────────────────
 
 async function resolveRequest(request: Request) {
@@ -225,14 +281,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Route: /campaign/:id/submitted
   const submittedMatch = proxyPath.match(/^campaign\/([^/]+)\/submitted$/);
   if (submittedMatch) {
-    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `/apps/ugme/campaign/${submittedMatch[1]}/submitted`);
-    return handleSubmitted(submittedMatch[1], shop, brandName, loggedInCustomerId);
+    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `${PROXY_BASE}/campaign/${submittedMatch[1]}/submitted`);
+    return handleSubmitted(submittedMatch[1], shop, brandName, loggedInCustomerId, url);
   }
 
   // Route: /campaign/:id/submit
   const submitMatch = proxyPath.match(/^campaign\/([^/]+)\/submit$/);
   if (submitMatch) {
-    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `/apps/ugme/campaign/${submitMatch[1]}/submit`);
+    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `${PROXY_BASE}/campaign/${submitMatch[1]}/submit`);
     return handleSubmitForm(submitMatch[1], shop, brandName, loggedInCustomerId, url);
   }
 
@@ -245,13 +301,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Route: /account/submission/:id (detail view)
   const submissionDetailMatch = proxyPath.match(/^account\/submission\/([^/]+)$/);
   if (submissionDetailMatch) {
-    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `/apps/ugme/account/submission/${submissionDetailMatch[1]}`);
+    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `${PROXY_BASE}/account/submission/${submissionDetailMatch[1]}`);
     return handleSubmissionDetail(submissionDetailMatch[1], shop, brandName, loggedInCustomerId);
   }
 
   // Route: /account
   if (proxyPath === "account") {
-    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, "/apps/ugme/account");
+    if (!loggedInCustomerId) return loginRedirect(shop.shopDomain, `${PROXY_BASE}/account`);
     return handleAccount(shop, brandName, loggedInCustomerId);
   }
 
@@ -312,7 +368,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
 async function handleCampaignLibrary(shop: ShopInfo, brandName: string, loggedInCustomerId: string | null) {
   const campaigns = await prisma.campaign.findMany({
-    where: { shopId: shop.id, status: "ACTIVE" },
+    where: { shopId: shop.id, status: "ACTIVE", rewardType: { not: "SUBSCRIPTION_DISCOUNT" } },
     select: {
       id: true,
       title: true,
@@ -326,6 +382,10 @@ async function handleCampaignLibrary(shop: ShopInfo, brandName: string, loggedIn
       discountCodeType: true,
       discountCodeExpiryDays: true,
       discountCodeMinOrder: true,
+      storeCreditAmount: true,
+      storeCreditExpiryDays: true,
+      productScope: true,
+      products: true,
       maxSubmissions: true,
       productTitle: true,
       productImageUrl: true,
@@ -343,16 +403,16 @@ async function handleCampaignLibrary(shop: ShopInfo, brandName: string, loggedIn
   const campaignCards = campaigns
     .map(
       (c) => `
-    <a href="/apps/ugme/campaign/${c.id}?shop=${shop.shopDomain}" style="text-decoration: none; color: inherit; display: block; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius); overflow: hidden; transition: box-shadow 0.15s ease;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
+    <a href="${PROXY_BASE}/campaign/${c.id}?shop=${shop.shopDomain}" style="text-decoration: none; color: inherit; display: block; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius); overflow: hidden; transition: box-shadow 0.15s ease;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
       <div style="padding: 16px;">
         <div style="display: flex; align-items: flex-start; gap: 12px;">
           ${
-            c.productImageUrl
-              ? `<img src="${escapeHtml(c.productImageUrl)}" alt="" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: #f3f3f3;" />`
+            parseProducts(c.products)[0]?.imageUrl || c.productImageUrl
+              ? `<img src="${escapeHtml(parseProducts(c.products)[0]?.imageUrl || c.productImageUrl || "")}" alt="" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: #f3f3f3;" />`
               : ""
           }
           <div style="flex: 1; min-width: 0;">
-            <div style="font-weight: 600; font-size: 15px; margin-bottom: 2px;">${escapeHtml(c.title)}</div>
+            <div style="font-weight: 600; font-size: 15px; margin-bottom: 2px;">For buyers of ${escapeHtml(productNames(c))}</div>
             <div style="font-size: 13px; color: var(--ugme-muted); margin-bottom: 8px;">${escapeHtml(c.moment)}</div>
             <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
               <span class="ugme-badge ugme-badge--reward">${escapeHtml(rewardText(c))}</span>
@@ -368,21 +428,20 @@ async function handleCampaignLibrary(shop: ShopInfo, brandName: string, loggedIn
     .join("");
 
   const body = `
-    <div class="ugme-section-label">FROM ${escapeHtml(brandName).toUpperCase()}</div>
-    <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">Real content, real discount.</h1>
+    <div class="ugme-section-label">${escapeHtml(brandName).toUpperCase()} SOCIAL WALL</div>
+    <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 8px;">Get featured on our wall</h1>
     <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 24px;">
-      ${campaigns.length} ask${campaigns.length !== 1 ? "s" : ""} live right now. Pick one — approved videos
-      earn rewards for approved content.
+      Bought from us? Share a video of it in action. Approved posts appear on our Social Wall with a Verified buyer badge.
     </p>
     <div style="display: flex; flex-direction: column; gap: 12px;">
-      ${campaignCards || '<p style="color: var(--ugme-muted);">No campaigns available right now.</p>'}
+      ${campaignCards || '<p style="color: var(--ugme-muted);">Nothing to share to right now — check back soon.</p>'}
     </div>
     <p style="font-size: 12px; color: var(--ugme-muted); margin-top: 24px;">
-      One submission per ask. Approved content earns you the listed reward.
+      One post per wall. Only verified buyers can share.
     </p>
   `;
 
-  const html = proxyLayout({ title: "Campaigns", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+  const html = proxyLayout({ title: "Social Wall", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
@@ -405,6 +464,10 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
       discountCodeType: true,
       discountCodeExpiryDays: true,
       discountCodeMinOrder: true,
+      storeCreditAmount: true,
+      storeCreditExpiryDays: true,
+      productScope: true,
+      products: true,
       maxSubmissions: true,
       endDate: true,
       status: true,
@@ -420,52 +483,19 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
     const body = `
       <div style="text-align: center; padding: 40px 0;">
         <div style="font-size: 48px; margin-bottom: 16px;">🔍</div>
-        <h1 style="font-size: 20px; margin-bottom: 8px;">Campaign not found</h1>
-        <p style="color: var(--ugme-muted); margin-bottom: 24px;">This campaign may have ended or doesn't exist.</p>
-        <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Browse campaigns</a>
+        <h1 style="font-size: 20px; margin-bottom: 8px;">This wall isn't open right now</h1>
+        <p style="color: var(--ugme-muted); margin-bottom: 24px;">It may have closed, or the link is out of date.</p>
+        <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to store</a>
       </div>
     `;
     const html = proxyLayout({ title: "Not Found", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
     return new Response(html, { status: 404, headers: { "Content-Type": "text/html; charset=utf-8" } });
   }
 
-  // ── Product-specific subscription verification (Recharge) ──
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId && loggedInCustomerId) {
-    try {
-      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
-        { apiKey: shop.providerApiKey },
-        loggedInCustomerId,
-        campaign.productId
-      );
-      if (subscriber.status === "no_customer") {
-        const body = `
-          <div style="text-align: center; padding: 40px 0;">
-            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
-            <h1 style="font-size: 20px; margin-bottom: 8px;">Subscribers only</h1>
-            <p style="color: var(--ugme-muted); margin-bottom: 24px;">You need an active subscription to submit content and earn rewards.</p>
-            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
-          </div>
-        `;
-        const html = proxyLayout({ title: "Subscribers Only", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
-        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-      }
-
-      if (subscriber.status === "no_matching_subscription") {
-        const body = `
-          <div style="text-align: center; padding: 40px 0;">
-            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
-            <h1 style="font-size: 20px; margin-bottom: 8px;">No matching subscription</h1>
-            <p style="color: var(--ugme-muted); margin-bottom: 24px;">Rewards for this campaign are only available to subscribers of <strong>${escapeHtml(campaign.productTitle || "this product")}</strong>.</p>
-            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
-          </div>
-        `;
-        const html = proxyLayout({ title: "No Matching Subscription", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
-        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-      }
-    } catch (err) {
-      console.error("[UGME] Recharge product subscription check failed:", err);
-      // Fail open
-    }
+  // ── Verified buyers only ──
+  if (loggedInCustomerId) {
+    const check = await checkWallBuyer(shop, campaign, loggedInCustomerId);
+    if (check.status !== "eligible") return buyerGatePage(check, shop, brandName, campaign);
   }
 
   let specs: Array<{ label: string; description: string }> = [];
@@ -479,7 +509,7 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
   const requirements = specs.filter((s) => s.label === "Requirement");
   const reward = rewardText(campaign);
 
-  const slotsRemaining = campaign.maxSubmissions ? Math.max(0, campaign.maxSubmissions - campaign._count.submissions) : null;
+  const slotsRemaining = await spotsLeft(campaign);
 
   const deadlineHtml = campaign.endDate ? `closes ${new Date(campaign.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "";
 
@@ -507,33 +537,32 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
     slotsRemaining !== null || deadlineHtml
       ? `
     <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-top: 1px solid var(--ugme-border); border-bottom: 1px solid var(--ugme-border); margin-bottom: 24px; font-size: 13px;">
-      ${slotsRemaining !== null ? `<span style="font-weight: 600;">${slotsRemaining} slot${slotsRemaining !== 1 ? "s" : ""} left</span>` : ""}
+      ${slotsRemaining !== null ? `<span style="font-weight: 600;">${slotsRemaining === 0 ? "Wall is full" : spotsText(slotsRemaining)}</span>` : ""}
       ${deadlineHtml ? `<span style="color: var(--ugme-muted);">${deadlineHtml}</span>` : ""}
     </div>
   `
       : "";
 
   const body = `
-    <div class="ugme-section-label">FROM ${escapeHtml(brandName).toUpperCase()}</div>
-    <h1 style="font-size: 24px; font-weight: 700; line-height: 1.3; margin-bottom: 12px;">${escapeHtml(campaign.title)}</h1>
+    <div class="ugme-section-label">${escapeHtml(brandName).toUpperCase()} SOCIAL WALL</div>
+    <h1 style="font-size: 24px; font-weight: 700; line-height: 1.3; margin-bottom: 12px;">Get featured on our wall</h1>
     <div style="margin-bottom: 20px;">
       <span class="ugme-badge ugme-badge--reward">${escapeHtml(reward)}</span>
     </div>
 
-    <div class="ugme-section-label">What we're looking for</div>
+    <div class="ugme-section-label">What to share</div>
     <p style="font-size: 15px; margin-bottom: 24px; line-height: 1.6;">${escapeHtml(campaign.moment)}</p>
 
     ${techSpecsHtml}
     ${requirementsHtml}
     ${statsHtml}
 
-    <a href="/apps/ugme/campaign/${campaign.id}/submit?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--primary">
-      Submit your ${campaign.contentType === "VIDEO" ? "video" : "photo"}
+    <a href="${PROXY_BASE}/campaign/${campaign.id}/submit?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--primary">
+      Share your ${campaign.contentType === "VIDEO" ? "video" : "photo"}
     </a>
 
     <p style="font-size: 12px; color: var(--ugme-muted); margin-top: 16px; line-height: 1.5;">
-      Approved ${campaign.contentType === "VIDEO" ? "videos" : "photos"} ${reward.includes("free") ? `earn ${reward} on` : `take ${reward}`} your next subscription charge automatically.
-      You'll agree to terms and submit next.
+      For verified buyers of ${escapeHtml(productNames(campaign))}. Approved ${campaign.contentType === "VIDEO" ? "videos" : "photos"} appear on the wall with a Verified buyer badge${hasReward(campaign) ? ` and earn ${escapeHtml(reward)}` : ""}.
     </p>
   `;
 
@@ -560,6 +589,10 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       discountCodeType: true,
       discountCodeExpiryDays: true,
       discountCodeMinOrder: true,
+      storeCreditAmount: true,
+      storeCreditExpiryDays: true,
+      productScope: true,
+      products: true,
       maxSubmissions: true,
       status: true,
       shopId: true,
@@ -572,7 +605,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   if (!campaign || campaign.shopId !== shop.id || campaign.status !== "ACTIVE") {
     return new Response(null, {
       status: 302,
-      headers: { Location: `/apps/ugme?shop=${shop.shopDomain}` },
+      headers: { Location: `${PROXY_BASE}/campaign/${campaignId}?shop=${shop.shopDomain}` },
     });
   }
 
@@ -585,95 +618,31 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   if (existingSubmission) {
     return new Response(null, {
       status: 302,
-      headers: { Location: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` },
+      headers: { Location: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` },
     });
   }
 
-  // Check slots
-  if (campaign.maxSubmissions) {
-    const remaining = campaign.maxSubmissions - campaign._count.submissions;
-    if (remaining <= 0) {
+  // Check spots (submission limit)
+  const remaining = await spotsLeft(campaign);
+  {
+    if (remaining !== null && remaining <= 0) {
       const body = `
         <div style="text-align: center; padding: 40px 0;">
           <div style="font-size: 48px; margin-bottom: 16px;">😔</div>
-          <h1 style="font-size: 20px; margin-bottom: 8px;">All slots filled</h1>
-          <p style="color: var(--ugme-muted); margin-bottom: 24px;">This campaign has reached its submission limit.</p>
-          <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Browse other campaigns</a>
+          <h1 style="font-size: 20px; margin-bottom: 8px;">This wall is full</h1>
+          <p style="color: var(--ugme-muted); margin-bottom: 24px;">Thanks for your interest — it isn't taking new posts right now.</p>
+          <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to store</a>
         </div>
       `;
-      const html = proxyLayout({ title: "Slots Full", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+      const html = proxyLayout({ title: "Wall is full", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
       return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
   }
 
-  // ── Product-specific subscription verification (Recharge) ──
-  let matchingSubscriptionId: string | null = null;
-
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId && loggedInCustomerId) {
-    try {
-      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
-        { apiKey: shop.providerApiKey },
-        customer.shopifyCustomerId || loggedInCustomerId,
-        campaign.productId
-      );
-      if (subscriber.status === "no_customer") {
-        const body = `
-          <div style="text-align: center; padding: 40px 0;">
-            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
-            <h1 style="font-size: 20px; margin-bottom: 8px;">Subscribers only</h1>
-            <p style="color: var(--ugme-muted); margin-bottom: 24px;">You need an active subscription to submit content and earn rewards.</p>
-            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
-          </div>
-        `;
-        const html = proxyLayout({ title: "Subscribers Only", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
-        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-      }
-
-      if (subscriber.status === "no_matching_subscription") {
-        const body = `
-          <div style="text-align: center; padding: 40px 0;">
-            <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
-            <h1 style="font-size: 20px; margin-bottom: 8px;">No matching subscription</h1>
-            <p style="color: var(--ugme-muted); margin-bottom: 24px;">Rewards for this campaign are only available to subscribers of <strong>${escapeHtml(campaign.productTitle || "this product")}</strong>.</p>
-            <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">Back to campaigns</a>
-          </div>
-        `;
-        const html = proxyLayout({ title: "No Matching Subscription", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
-        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-      }
-
-      // Auto-select if only one, otherwise we'll show a picker
-      if (subscriber.status === "eligible") matchingSubscriptionId = subscriber.subscriptionIds[0];
-    } catch (err) {
-      console.error("[UGME] Recharge product subscription check failed:", err);
-      // Fail open
-    }
-  }
-
-  // ── Reward gating warning for single-discount providers (e.g. Recharge) ──
-  // Only subscription discounts are limited (Recharge allows one discount per
-  // address). Discount codes and store credit can stack, so no warning for those.
-  let rewardWarningHtml = "";
-  if (shop.providerConnected && campaign.rewardType === "SUBSCRIPTION_DISCOUNT") {
-    try {
-      const gating = await checkRewardGating({
-        customerId: customer.id,
-        shopId: shop.id,
-        subscriptionProvider: shop.subscriptionProvider as any,
-      });
-      if (gating.hasActiveReward && gating.message) {
-        rewardWarningHtml = `
-          <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--ugme-radius); padding: 14px 16px; margin-bottom: 20px;">
-            <div style="font-weight: 600; font-size: 14px; color: #92400e; margin-bottom: 4px;">\u26a0\ufe0f Heads up \u2014 you have an active reward</div>
-            <div style="font-size: 13px; color: #78350f; line-height: 1.5;">${escapeHtml(gating.message)}</div>
-          </div>
-        `;
-      }
-    } catch (err) {
-      console.error("[UGME] Reward gating check failed:", err);
-      // Fail open — don't block submission if gating check fails
-    }
-  }
+  // ── Verified buyers only ──
+  const buyer = await checkWallBuyer(shop, campaign, customer.shopifyCustomerId || loggedInCustomerId);
+  if (buyer.status !== "eligible") return buyerGatePage(buyer, shop, brandName, campaign);
+  const rewardWarningHtml = "";
 
   let specs: Array<{ label: string; description: string }> = [];
   try {
@@ -702,18 +671,21 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   }
 
   const body = `
-    <a href="/apps/ugme/campaign/${campaign.id}?shop=${shop.shopDomain}" style="display: inline-flex; align-items: center; gap: 4px; color: var(--ugme-muted); text-decoration: none; font-size: 14px; margin-bottom: 16px;">
-      ← Back to brief
+    <a href="https://${shop.shopDomain}/" style="display: inline-flex; align-items: center; gap: 4px; color: var(--ugme-muted); text-decoration: none; font-size: 14px; margin-bottom: 16px;">
+      ← Back to store
     </a>
 
-    <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 4px;">Submit your ${mediaWord}</h1>
-    <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 24px;">
-      ${escapeHtml(campaign.title)} · <span class="ugme-badge ugme-badge--reward" style="font-size: 12px; padding: 2px 8px;">${escapeHtml(reward)}</span>
+    <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 6px;">Share your ${mediaWord}</h1>
+    <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 16px; line-height: 1.5;">
+      Get featured on the ${escapeHtml(brandName)} Social Wall · <span class="ugme-badge ugme-badge--reward" style="font-size: 12px; padding: 2px 8px;">${escapeHtml(reward)}</span>
     </p>
+    ${campaign.moment?.trim() ? `<div style="background: var(--ugme-surface); border-radius: var(--ugme-radius); padding: 14px 16px; margin-bottom: 20px;"><div class="ugme-section-label" style="margin-bottom: 6px;">What to share</div><div style="font-size: 15px; line-height: 1.55;">${escapeHtml(campaign.moment)}</div></div>` : ""}
+    ${remaining !== null ? `<div style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: ${remaining <= 5 ? "#b45309" : "var(--ugme-fg)"};">${spotsText(remaining)} on this wall</div>` : ""}
+    <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #047857; margin-bottom: 20px;"><span style="display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: #d1fae5; align-items: center; justify-content: center; font-size: 11px;">✓</span>Verified buyer of ${escapeHtml(buyer.products.map((p) => p.title).join(", ") || productNames(campaign))}</div>
 
     ${errorBannerHtml}
     ${rewardWarningHtml}
-    <form id="submitForm" method="POST" action="/apps/ugme/campaign/${campaign.id}/submit?shop=${shop.shopDomain}" enctype="multipart/form-data">
+    <form id="submitForm" method="POST" action="${PROXY_BASE}/campaign/${campaign.id}/submit?shop=${shop.shopDomain}" enctype="multipart/form-data">
 
       <!-- File upload area -->
       <div id="uploadArea" style="border: 2px dashed var(--ugme-border); border-radius: var(--ugme-radius); padding: 40px 20px; text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s; margin-bottom: 20px;" onclick="document.getElementById('fileInput').click()">
@@ -774,8 +746,14 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
           : ""
       }
 
+      <!-- Name on the wall (opt-in) -->
+      <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px; cursor: pointer; padding: 12px; border-radius: var(--ugme-radius-sm); border: 1px solid var(--ugme-border); margin-bottom: 20px;">
+        <input type="checkbox" name="showName" style="margin-top: 2px; accent-color: var(--ugme-accent); width: 18px; height: 18px; flex-shrink: 0;" />
+        <span>Show my first name and last initial on the wall<br><span style="color: var(--ugme-muted); font-size: 13px;">Otherwise your post just shows “Verified buyer”.</span></span>
+      </label>
+
       <!-- Optional message -->
-      <div class="ugme-section-label">Message (optional)</div>
+      <div class="ugme-section-label">Message to ${escapeHtml(brandName)} (optional)</div>
       <textarea name="message" placeholder="Anything you want us to know about your ${mediaWord}…" style="width: 100%; min-height: 80px; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius-sm); padding: 12px; font-size: 14px; font-family: inherit; resize: vertical; margin-bottom: 20px; background: var(--ugme-bg); color: var(--ugme-fg);"></textarea>
 
       <!-- Terms agreement -->
@@ -792,13 +770,20 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
           </li>
           <li style="display: flex; gap: 8px;">
             <span style="flex-shrink: 0;">✓</span>
-            <span>If approved, your reward (${escapeHtml(reward)}) will be delivered to you.</span>
+            <span>${hasReward(campaign) ? `If approved, your ${mediaWord} appears on the Social Wall and your reward (${escapeHtml(reward)}) is sent to you by email.` : `If approved, your ${mediaWord} appears on the ${escapeHtml(brandName)} Social Wall.`}</span>
           </li>
           <li style="display: flex; gap: 8px;">
             <span style="flex-shrink: 0;">✓</span>
-            <span>Submissions are typically reviewed within 3–5 business days.</span>
+            <span>Posts are usually reviewed within 3–5 business days.</span>
           </li>
         </ul>
+        <details style="margin: -4px 0 14px; font-size: 13px; color: var(--ugme-muted);">
+          <summary style="cursor: pointer; color: var(--ugme-fg); font-weight: 600;">Read the full usage rights</summary>
+          <p style="margin: 10px 0 6px; font-weight: 600; color: var(--ugme-fg);">${escapeHtml(USAGE_RIGHTS_INTRO)}</p>
+          <ol style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5;">
+            ${usageRightsClauses(brandName).map((c) => `<li>${escapeHtml(c)}</li>`).join("")}
+          </ol>
+        </details>
         <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px; cursor: pointer;">
           <input type="checkbox" id="termsCheckbox" name="terms" required style="margin-top: 2px; accent-color: var(--ugme-accent); width: 18px; height: 18px; flex-shrink: 0;" />
           <span>I agree to these terms and grant usage rights for my content.</span>
@@ -806,11 +791,11 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       </div>
 
       <button type="submit" id="submitBtn" class="ugme-btn ugme-btn--primary" disabled style="opacity: 0.5; cursor: not-allowed;">
-        Submit ${mediaWord}
+        Share ${mediaWord}
       </button>
 
       <p style="font-size: 12px; color: var(--ugme-muted); text-align: center; margin-top: 12px;">
-        One submission per campaign. You can't edit after submitting.
+        One post per wall. You can't edit after sharing.
       </p>
     </form>
 
@@ -1224,7 +1209,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
             token: ticket.token,
             expires: ticket.expires,
             message: fields.get('message') || '',
-            subscriptionId: fields.get('subscriptionId') || '',
+            showName: fields.get('showName') === 'on',
           });
           if (r.json.redirect) {
             setBusy(false);
@@ -1285,36 +1270,21 @@ const PART_SIZE = 16 * 1024 * 1024; // 16 MB parts (1 GB → 64 parts)
 async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, request: Request) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true, rewardType: true },
+    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true, rewardType: true, productScope: true, products: true, maxSubmissions: true },
   });
 
   if (!campaign || campaign.shopId !== shop.id || campaign.status !== "ACTIVE") {
     return new Response(null, {
       status: 302,
-      headers: { Location: `/apps/ugme?shop=${shop.shopDomain}` },
+      headers: { Location: `${PROXY_BASE}?shop=${shop.shopDomain}` },
     });
   }
 
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
-  let resolvedSubscriptionId: string | null = null;
-  // ── Product-specific subscription verification (Recharge) ──
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId && loggedInCustomerId) {
-    try {
-      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
-        { apiKey: shop.providerApiKey },
-        loggedInCustomerId,
-        campaign.productId
-      );
-      if (subscriber.status !== "eligible") {
-        return errorRedirect(shop.shopDomain, campaignId, "no_subscription");
-      }
-      resolvedSubscriptionId = subscriber.subscriptionIds[0] ?? null;
-    } catch (err) {
-      console.error("[UGME] Recharge product subscription check on submit failed:", err);
-      // Fail open
-    }
-  }
+  // ── Verified buyers only ──
+  const buyer = await checkWallBuyer(shop, campaign, customer.shopifyCustomerId || loggedInCustomerId);
+  if (buyer.status !== "eligible") return errorRedirect(shop.shopDomain, campaignId, buyer.status === "not_buyer" ? "not_buyer" : "verify_failed");
 
   // Check duplicate
   const existing = await prisma.submission.findFirst({
@@ -1323,18 +1293,21 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
   if (existing) {
     return new Response(null, {
       status: 302,
-      headers: { Location: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` },
+      headers: { Location: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` },
     });
   }
 
+  const left = await spotsLeft(campaign);
+  if (left !== null && left <= 0) return errorRedirect(shop.shopDomain, campaignId, "full");
+
   // Parse the multipart form data
   let description = "";
-  let subscriptionId = "";
+  let showName = false;
   let file: File | null = null;
   try {
     const formData = await request.formData();
     description = (formData.get("message") as string) || "";
-    subscriptionId = (formData.get("subscriptionId") as string) || "";
+    showName = formData.get("showName") === "on";
     file = formData.get("file") as File | null;
   } catch (err) {
     console.error("[UGME] Form parse error:", err);
@@ -1369,7 +1342,8 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
       contentUrl: "r2://pending", // temporary, updated after upload
       fileBytes: file.size,
       description: description || null,
-      subscriptionId: resolvedSubscriptionId,
+      products: JSON.stringify(buyer.products),
+      displayName: showName ? await customerDisplayName(shop, customer.shopifyCustomerId || loggedInCustomerId) : null,
       rightsAccepted: true,
     },
   });
@@ -1395,7 +1369,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
   // Redirect to confirmation
   return new Response(null, {
     status: 302,
-    headers: { Location: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` },
+    headers: { Location: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` },
   });
 }
 
@@ -1407,11 +1381,13 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
 const UPLOAD_ERRORS: Record<string, string> = {
   no_file: "Please select a file to upload.",
   too_large: "File is too large. Maximum size is 1 GB.",
-  wrong_type: "That file type isn't accepted for this campaign.",
+  wrong_type: "That file type isn't accepted here.",
   upload_failed: "Upload failed. Please try again.",
   plan_limit: "Submission limit reached. The store’s current plan cannot accept more submissions right now.",
-  no_subscription: "You need an active subscription to this product to submit.",
-  closed: "This campaign is no longer accepting submissions.",
+  not_buyer: "Only verified buyers can share to this wall.",
+  verify_failed: "We couldn’t confirm your purchase right now. Please try again in a moment.",
+  closed: "This wall isn’t accepting posts right now.",
+  full: "This wall is full — it isn’t taking new posts right now.",
   expired: "Your upload session expired. Please try again.",
 };
 
@@ -1435,7 +1411,7 @@ function signUpload(parts: string[]): string {
 async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInCustomerId: string) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true, rewardType: true },
+    select: { id: true, title: true, shopId: true, status: true, contentType: true, productId: true, rewardType: true, productScope: true, products: true, maxSubmissions: true },
   });
   if (!campaign || campaign.shopId !== shop.id || campaign.status !== "ACTIVE") {
     return { ok: false as const, response: uploadError("closed", 409) };
@@ -1443,23 +1419,11 @@ async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInC
 
   const customer = await findOrCreateCustomer(shop.id, loggedInCustomerId, shop.accessToken, shop.shopDomain);
 
-  let subscriptionId: string | null = null;
-  if (campaign.rewardType !== "DISCOUNT_CODE" && shop.providerConnected && getProviderAdapter(shop.subscriptionProvider).capabilities.verifiesSubscribers && campaign.productId) {
-    try {
-      const subscriber = await getProviderAdapter(shop.subscriptionProvider).checkSubscriber(
-        { apiKey: shop.providerApiKey },
-        loggedInCustomerId,
-        campaign.productId
-      );
-      if (subscriber.status !== "eligible") return { ok: false as const, response: uploadError("no_subscription", 403) };
-      // Remember which subscription the reward should go to (first match;
-      // re-validated again at approval time).
-      subscriptionId = subscriber.subscriptionIds[0] ?? null;
-    } catch (err) {
-      console.error("[UGME] Recharge check (direct upload) failed:", err);
-      // Fail open, same as the multipart path
-    }
-  }
+  // Verified buyers only — also tells us which wall products they bought
+  const buyer = await checkWallBuyer(shop, campaign, customer.shopifyCustomerId || loggedInCustomerId);
+  if (buyer.status === "not_buyer") return { ok: false as const, response: uploadError("not_buyer", 403) };
+  if (buyer.status === "error") return { ok: false as const, response: uploadError("verify_failed", 503) };
+  const products = buyer.products;
 
   const existing = await prisma.submission.findFirst({
     where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
@@ -1468,11 +1432,15 @@ async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInC
   if (existing) {
     return {
       ok: false as const,
-      response: uploadJson({ redirect: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` }, 409),
+      response: uploadJson({ redirect: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` }, 409),
     };
   }
 
-  return { ok: true as const, campaign, customer, subscriptionId };
+  // Submission limit — checked last so customers who already shared get their own message
+  const left = await spotsLeft(campaign);
+  if (left !== null && left <= 0) return { ok: false as const, response: uploadError("full", 409) };
+
+  return { ok: true as const, campaign, customer, products };
 }
 
 function verifyUploadToken(given: string, parts: string[]): boolean {
@@ -1555,7 +1523,7 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
     token?: string;
     expires?: number;
     message?: string;
-    subscriptionId?: string;
+    showName?: boolean;
     hasPoster?: boolean;
     durationSecs?: number;
   };
@@ -1624,25 +1592,26 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
       durationSecs,
       fileBytes: head.size,
       description: (body.message || "").slice(0, 2000) || null,
-      // Resolved on the server from the provider — never trusted from the browser
-      subscriptionId: pre.subscriptionId,
+      // Resolved on the server from the customer's orders — never trusted from the browser
+      products: JSON.stringify(pre.products),
+      displayName: body.showName ? await customerDisplayName(shop, pre.customer.shopifyCustomerId || loggedInCustomerId) : null,
       rightsAccepted: true,
     },
   });
 
-  return uploadJson({ redirect: `/apps/ugme/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` });
+  return uploadJson({ redirect: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` });
 }
 
 function errorRedirect(shopDomain: string, campaignId: string, reason: string): Response {
   return new Response(null, {
     status: 302,
-    headers: { Location: `/apps/ugme/campaign/${campaignId}/submit?shop=${shopDomain}&error=${reason}` },
+    headers: { Location: `${PROXY_BASE}/campaign/${campaignId}/submit?shop=${shopDomain}&error=${reason}` },
   });
 }
 
 // ── C10: Submitted Confirmation ─────────────────────────────────
 
-async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string) {
+async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, url?: URL) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
     select: {
@@ -1656,6 +1625,10 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
       discountCodeType: true,
       discountCodeExpiryDays: true,
       discountCodeMinOrder: true,
+      storeCreditAmount: true,
+      storeCreditExpiryDays: true,
+      productScope: true,
+      products: true,
       contentType: true,
       shopId: true,
     },
@@ -1664,14 +1637,68 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
   const reward = campaign ? rewardText(campaign) : "your reward";
   const mediaWord = campaign?.contentType === "VIDEO" ? "video" : "photo";
 
+  // Show the customer's real status — this page is also where they land when
+  // they open the share link again after already posting.
+  const customer = await prisma.customer.findFirst({ where: { shopId: shop.id, shopifyCustomerId: loggedInCustomerId } });
+  const mine = customer
+    ? await prisma.submission.findFirst({
+        where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
+        orderBy: { createdAt: "desc" },
+        include: { reward: true },
+      })
+    : null;
+
+  if (mine && mine.status === "APPROVED" && campaign) {
+    const r = mine.reward;
+    const delivered = r?.status === "APPLIED";
+    let rewardBox: string;
+    if (!hasReward(campaign)) {
+      rewardBox = `<div style="font-size: 15px; font-weight: 600; color: #065f46;">Featured with a Verified buyer badge</div>`;
+    } else if (delivered && r?.rewardType === "DISCOUNT_CODE" && r.discountCode) {
+      rewardBox = `
+        <div class="ugme-section-label" style="color: #065f46; margin-bottom: 6px;">Your reward</div>
+        <div style="font-size: 15px; font-weight: 600; color: #065f46; margin-bottom: 10px;">${escapeHtml(reward)}</div>
+        <code style="display: inline-block; font-family: ui-monospace, Menlo, monospace; font-size: 18px; font-weight: 700; letter-spacing: 0.04em; background: #fff; border: 2px dashed #10b981; color: #064e3b; padding: 10px 14px; border-radius: 10px;">${escapeHtml(r.discountCode)}</code>
+        <div style="margin-top: 12px;"><a href="https://${shop.shopDomain}/discount/${encodeURIComponent(r.discountCode)}?redirect=%2F" style="color: #047857; font-weight: 600; font-size: 14px;">Shop now — code applied automatically →</a></div>`;
+    } else if (delivered && r?.rewardType === "STORE_CREDIT") {
+      rewardBox = `
+        <div class="ugme-section-label" style="color: #065f46; margin-bottom: 6px;">Your reward</div>
+        <div style="font-size: 15px; font-weight: 600; color: #065f46;">${escapeHtml(reward)} added to your account</div>
+        <div style="font-size: 13px; color: #047857; margin-top: 6px;">Sign in when you shop and apply it at checkout.</div>`;
+    } else {
+      rewardBox = `
+        <div class="ugme-section-label" style="color: #065f46; margin-bottom: 6px;">Your reward</div>
+        <div style="font-size: 15px; font-weight: 600; color: #065f46;">${escapeHtml(reward)}</div>
+        <div style="font-size: 13px; color: #047857; margin-top: 6px;">On its way — we'll email it to you shortly.</div>`;
+    }
+    const body = `
+      <div style="text-align: center; padding: 24px 0;">
+        <div style="width: 64px; height: 64px; border-radius: 50%; background: #ecfdf5; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; font-size: 28px;">🎉</div>
+        <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">You're on the wall!</h1>
+        <p style="color: var(--ugme-muted); font-size: 15px; margin-bottom: 24px; line-height: 1.6;">
+          Your ${mediaWord} was approved and is live on the ${escapeHtml(brandName)} Social Wall.
+        </p>
+        <div style="background: #ecfdf5; border-radius: var(--ugme-radius); padding: 20px; margin-bottom: 24px;">${rewardBox}</div>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <a href="${PROXY_BASE}/account/submission/${mine.id}?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--primary">View my post</a>
+          <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--outline">Back to store</a>
+        </div>
+      </div>
+    `;
+    const html = proxyLayout({ title: "You're on the wall!", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
+
+  const alreadyShared = url?.searchParams.get("already") === "1";
+
   const body = `
     <div style="text-align: center; padding: 24px 0;">
       <div style="width: 64px; height: 64px; border-radius: 50%; background: #ecfdf5; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; font-size: 28px;">
         ✓
       </div>
-      <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">Submitted!</h1>
+      <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">${alreadyShared ? "You've already shared to this wall" : "Thanks for sharing!"}</h1>
       <p style="color: var(--ugme-muted); font-size: 15px; margin-bottom: 24px; line-height: 1.6;">
-        Your ${mediaWord} for <strong>${escapeHtml(campaign?.title || "this campaign")}</strong> is in for review.
+        Your ${mediaWord} is in for review. You'll appear on the ${escapeHtml(brandName)} Social Wall once it's approved.
       </p>
 
       <div style="background: var(--ugme-surface); border-radius: var(--ugme-radius); padding: 20px; margin-bottom: 24px; text-align: left;">
@@ -1679,27 +1706,27 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
         <div style="display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.5;">
           <div style="display: flex; gap: 12px; align-items: flex-start;">
             <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--ugme-accent); color: var(--ugme-accent-fg); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;">1</div>
-            <span>We'll review your submission within 3–5 business days.</span>
+            <span>${escapeHtml(brandName)} reviews your post, usually within 3–5 business days.</span>
           </div>
           <div style="display: flex; gap: 12px; align-items: flex-start;">
             <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--ugme-border); color: var(--ugme-fg); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;">2</div>
-            <span>If approved, your reward of <strong>${escapeHtml(reward)}</strong> will be delivered to you.</span>
+            <span>${campaign && hasReward(campaign) ? `If approved, you're featured on the wall and we email you your reward: <strong>${escapeHtml(reward)}</strong>.` : `If approved, you're featured on the wall with a Verified buyer badge, and we'll email you.`}</span>
           </div>
           <div style="display: flex; gap: 12px; align-items: flex-start;">
             <div style="width: 24px; height: 24px; border-radius: 50%; background: var(--ugme-border); color: var(--ugme-fg); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;">3</div>
-            <span>Track status anytime in <a href="/apps/ugme/account?shop=${shop.shopDomain}" style="color: var(--ugme-accent); text-decoration: underline;">My submissions</a>.</span>
+            <span>Track status anytime in <a href="${PROXY_BASE}/account?shop=${shop.shopDomain}" style="color: var(--ugme-accent); text-decoration: underline;">My posts</a>.</span>
           </div>
         </div>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 10px;">
-        <a href="/apps/ugme/account?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--primary">My submissions</a>
-        <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline">Browse other campaigns</a>
+        <a href="${PROXY_BASE}/account?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--primary">My posts</a>
+        <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--outline">Back to store</a>
       </div>
     </div>
   `;
 
-  const html = proxyLayout({ title: "Submitted!", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+  const html = proxyLayout({ title: "Thanks for sharing!", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
@@ -1713,17 +1740,17 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
   if (!customer) {
     // No submissions yet — show empty state
     const body = `
-      <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">My submissions</h1>
-      <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 32px;">Track your submissions and upcoming discounts.</p>
+      <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">My posts</h1>
+      <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 32px;">Track your posts and rewards.</p>
 
       <div style="text-align: center; padding: 40px 0;">
         <div style="font-size: 48px; margin-bottom: 16px;">📹</div>
-        <h2 style="font-size: 18px; margin-bottom: 8px;">No submissions yet</h2>
-        <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 24px;">Submit your first video to earn discounts on your subscription.</p>
-        <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--primary">Browse campaigns</a>
+        <h2 style="font-size: 18px; margin-bottom: 8px;">No posts yet</h2>
+        <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 24px;">Bought something you love? Share a video on ${escapeHtml(brandName)}'s Social Wall.</p>
+        <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--primary">Back to store</a>
       </div>
     `;
-    const html = proxyLayout({ title: "My Submissions", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+    const html = proxyLayout({ title: "My posts", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   }
 
@@ -1736,6 +1763,7 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
       contentType: true,
       thumbnailUrl: true,
       createdAt: true,
+      products: true,
       campaign: {
         select: {
           id: true,
@@ -1748,6 +1776,10 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
           discountCodeType: true,
           discountCodeExpiryDays: true,
           discountCodeMinOrder: true,
+      storeCreditAmount: true,
+      storeCreditExpiryDays: true,
+      productScope: true,
+      products: true,
           productImageUrl: true,
         },
       },
@@ -1758,6 +1790,7 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
           appliedAt: true,
           rewardType: true,
           discountCode: true,
+          storeCreditAmount: true,
           expiresAt: true,
         },
       },
@@ -1767,7 +1800,7 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
 
   // Get upcoming rewards (approved but not yet applied)
   const upcomingRewards = submissions.filter(
-    (s) => s.status === "APPROVED" && s.reward && s.reward.status !== "APPLIED",
+    (s) => s.status === "APPROVED" && hasReward(s.campaign) && s.reward?.status !== "APPLIED",
   );
 
   const statusBadge = (status: string) => {
@@ -1784,27 +1817,33 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
   const submissionCards = submissions
     .map((s) => {
       const reward = rewardText(s.campaign);
+      const bought = parseProducts(s.products);
+      const image = bought[0]?.imageUrl || s.campaign.productImageUrl;
+      const heading = bought.length ? bought.map((p) => p.title).join(", ") : `${brandName} Social Wall`;
+      const approvedLine = !hasReward(s.campaign)
+        ? "Featured on the wall"
+        : s.reward?.status === "APPLIED"
+          ? s.reward.rewardType === "DISCOUNT_CODE" && s.reward.discountCode
+            ? `${escapeHtml(reward)} — your code: <strong style="font-family: ui-monospace, Menlo, monospace;">${escapeHtml(s.reward.discountCode)}</strong>`
+            : s.reward.rewardType === "STORE_CREDIT"
+              ? `${escapeHtml(reward)} added to your account`
+              : `${escapeHtml(reward)} — applied`
+          : `${escapeHtml(reward)} — on its way`;
       const date = new Date(s.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
       return `
-      <a href="/apps/ugme/account/submission/${s.id}?shop=${shop.shopDomain}" style="text-decoration: none; color: inherit; display: block; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius); padding: 16px; display: flex; gap: 12px; align-items: flex-start; transition: box-shadow 0.15s ease;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
+      <a href="${PROXY_BASE}/account/submission/${s.id}?shop=${shop.shopDomain}" style="text-decoration: none; color: inherit; display: block; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius); padding: 16px; display: flex; gap: 12px; align-items: flex-start; transition: box-shadow 0.15s ease;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
         ${
-          s.campaign.productImageUrl
-            ? `<img src="${escapeHtml(s.campaign.productImageUrl)}" alt="" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: #f3f3f3; flex-shrink: 0;" />`
+          image
+            ? `<img src="${escapeHtml(image)}" alt="" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: #f3f3f3; flex-shrink: 0;" />`
             : `<div style="width: 48px; height: 48px; border-radius: 8px; background: var(--ugme-surface); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">📹</div>`
         }
         <div style="flex: 1; min-width: 0;">
-          <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">${escapeHtml(s.campaign.title)}</div>
+          <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">${escapeHtml(heading)}</div>
           <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px;">
             ${statusBadge(s.status)}
             <span style="font-size: 12px; color: var(--ugme-muted);">${date}</span>
           </div>
-          ${s.status === "APPROVED" ? `<div style="font-size: 13px; color: var(--ugme-success);">${escapeHtml(reward)} — ${
-            s.reward?.status === "APPLIED"
-              ? s.reward.rewardType === "DISCOUNT_CODE" && s.reward.discountCode
-                ? `your code: <strong style="font-family: ui-monospace, Menlo, monospace;">${escapeHtml(s.reward.discountCode)}</strong>`
-                : "reward applied"
-              : "reward on its way"
-          }</div>` : ""}
+          ${s.status === "APPROVED" ? `<div style="font-size: 13px; color: var(--ugme-success);">${approvedLine}</div>` : ""}
         </div>
         <span style="color: var(--ugme-muted); font-size: 18px; align-self: center; flex-shrink: 0;">›</span>
       </a>
@@ -1815,13 +1854,13 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
   const upcomingHtml =
     upcomingRewards.length > 0
       ? `
-    <div class="ugme-section-label" style="margin-top: 32px;">Upcoming discounts</div>
+    <div class="ugme-section-label" style="margin-top: 32px;">Rewards on the way</div>
     <div style="background: #ecfdf5; border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 24px;">
       ${upcomingRewards
         .map(
           (s) => `
         <div style="display: flex; justify-content: space-between; align-items: center; font-size: 14px;">
-          <span>${escapeHtml(s.campaign.title)}</span>
+          <span>${escapeHtml(parseProducts(s.products)[0]?.title || "Your post")}</span>
           <strong style="color: #065f46;">${escapeHtml(rewardText(s.campaign))}</strong>
         </div>
       `,
@@ -1832,9 +1871,9 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
       : "";
 
   const body = `
-    <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">My submissions</h1>
+    <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">My posts</h1>
     <p style="color: var(--ugme-muted); font-size: 14px; margin-bottom: 24px;">
-      ${submissions.length} submission${submissions.length !== 1 ? "s" : ""} total
+      ${submissions.length} post${submissions.length !== 1 ? "s" : ""} shared with ${escapeHtml(brandName)}
     </p>
 
     ${upcomingHtml}
@@ -1844,11 +1883,11 @@ async function handleAccount(shop: ShopInfo, brandName: string, loggedInCustomer
     </div>
 
     <div style="margin-top: 32px;">
-      <a href="/apps/ugme?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline">Browse campaigns</a>
+      <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--outline">Back to store</a>
     </div>
   `;
 
-  const html = proxyLayout({ title: "My Submissions", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
+  const html = proxyLayout({ title: "My posts", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
@@ -1861,7 +1900,7 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
   });
 
   if (!customer) {
-    return loginRedirect(shop.shopDomain, `/apps/ugme/account/submission/${submissionId}`);
+    return loginRedirect(shop.shopDomain, `${PROXY_BASE}/account/submission/${submissionId}`);
   }
 
   const submission = await prisma.submission.findUnique({
@@ -1877,6 +1916,7 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
       rejectionReason: true,
       reviewNote: true,
       reviewedAt: true,
+      products: true,
       customerId: true,
       campaign: {
         select: {
@@ -1891,6 +1931,10 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
           discountCodeType: true,
           discountCodeExpiryDays: true,
           discountCodeMinOrder: true,
+      storeCreditAmount: true,
+      storeCreditExpiryDays: true,
+      productScope: true,
+      products: true,
           productTitle: true,
           productImageUrl: true,
         },
@@ -1912,9 +1956,9 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
     const body = `
       <div style="text-align: center; padding: 40px 0;">
         <div style="font-size: 48px; margin-bottom: 16px;">🔍</div>
-        <h1 style="font-size: 20px; margin-bottom: 8px;">Submission not found</h1>
-        <p style="color: var(--ugme-muted); margin-bottom: 24px;">This submission doesn't exist or doesn't belong to you.</p>
-        <a href="/apps/ugme/account?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">My submissions</a>
+        <h1 style="font-size: 20px; margin-bottom: 8px;">Post not found</h1>
+        <p style="color: var(--ugme-muted); margin-bottom: 24px;">This post doesn't exist or doesn't belong to you.</p>
+        <a href="${PROXY_BASE}/account?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">My posts</a>
       </div>
     `;
     const html = proxyLayout({ title: "Not Found", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
@@ -1992,13 +2036,17 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
         '</div>' +
         '<p style="font-size: 13px; color: #065f46; margin: 8px 0 0 0;">Use this code at checkout. Single use' +
         (r.expiresAt ? ', expires ' + fmtDate(r.expiresAt) : '') + '.</p>';
+    } else if (!hasReward(submission.campaign)) {
+      appliedLine = '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Your post is live on the Social Wall with a Verified buyer badge.</p>';
+    } else if (r?.status === "APPLIED" && r.rewardType === "STORE_CREDIT") {
+      appliedLine = '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Added to your account' + (r.appliedAt ? ' on ' + fmtDate(r.appliedAt) : '') + '. Sign in when you shop and apply it at checkout' + (r.expiresAt ? ' (expires ' + fmtDate(r.expiresAt) + ')' : '') + '.</p>';
     } else if (r?.status === "APPLIED" && r.appliedAt) {
-      appliedLine = '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Applied to your subscription on ' + fmtDate(r.appliedAt) + '</p>';
+      appliedLine = '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Applied on ' + fmtDate(r.appliedAt) + '</p>';
     } else {
       appliedLine = '<p style="font-size: 13px; color: #065f46; margin: 4px 0 0 0;">Your reward will be delivered soon</p>';
     }
     rewardHtml = `<div style="background: #ecfdf5; border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 20px;">
-        <div class="ugme-section-label" style="color: #065f46;">Reward</div>
+        <div class="ugme-section-label" style="color: #065f46;">${hasReward(submission.campaign) ? "Reward" : "You're on the wall"}</div>
         <p style="font-size: 15px; font-weight: 600; color: #065f46; margin: 0;">${escapeHtml(reward)}</p>
         ${appliedLine}
       </div>`;
@@ -2007,16 +2055,16 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
   // Delete button — only for PENDING submissions
   const deleteHtml = submission.status === "PENDING"
     ? `<hr class="ugme-divider" />
-      <form method="POST" action="/apps/ugme/account/submission/${submission.id}/delete?shop=${shop.shopDomain}" onsubmit="return confirm('Delete this submission? This cannot be undone.');">
+      <form method="POST" action="${PROXY_BASE}/account/submission/${submission.id}/delete?shop=${shop.shopDomain}" onsubmit="return confirm('Delete this post? This cannot be undone.');">
         <button type="submit" class="ugme-btn" style="background: #fef2f2; color: #991b1b; border: 1px solid #fecaca;">
-          Delete submission
+          Delete post
         </button>
       </form>`
     : "";
 
   const body = `
-    <a href="/apps/ugme/account?shop=${shop.shopDomain}" style="display: inline-flex; align-items: center; gap: 4px; color: var(--ugme-muted); text-decoration: none; font-size: 14px; margin-bottom: 16px;">
-      ← My submissions
+    <a href="${PROXY_BASE}/account?shop=${shop.shopDomain}" style="display: inline-flex; align-items: center; gap: 4px; color: var(--ugme-muted); text-decoration: none; font-size: 14px; margin-bottom: 16px;">
+      ← My posts
     </a>
 
     ${mediaHtml}
@@ -2034,16 +2082,16 @@ async function handleSubmissionDetail(submissionId: string, shop: ShopInfo, bran
     ${reviewNoteHtml}
     ${rewardHtml}
 
-    <!-- Campaign info -->
+    <!-- Product info -->
     <div style="background: var(--ugme-surface); border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 20px;">
-      <div class="ugme-section-label">Campaign</div>
+      <div class="ugme-section-label">Product</div>
       <div style="display: flex; align-items: center; gap: 12px;">
-        ${submission.campaign.productImageUrl
-          ? '<img src="' + escapeHtml(submission.campaign.productImageUrl) + '" alt="" style="width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: #f3f3f3;" />'
+        ${(parseProducts(submission.products)[0]?.imageUrl || submission.campaign.productImageUrl)
+          ? '<img src="' + escapeHtml(parseProducts(submission.products)[0]?.imageUrl || submission.campaign.productImageUrl || "") + '" alt="" style="width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: #f3f3f3;" />'
           : ""
         }
         <div>
-          <div style="font-weight: 600; font-size: 14px;">${escapeHtml(submission.campaign.title)}</div>
+          <div style="font-weight: 600; font-size: 14px;">${escapeHtml(parseProducts(submission.products).map((p) => p.title).join(", ") || `${brandName} Social Wall`)}</div>
           <div style="font-size: 13px; color: var(--ugme-muted);">Reward: ${escapeHtml(reward)}</div>
         </div>
       </div>
@@ -2089,7 +2137,7 @@ async function handleDeleteSubmission(submissionId: string, shop: ShopInfo, bran
         <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
         <h1 style="font-size: 20px; margin-bottom: 8px;">Can't delete</h1>
         <p style="color: var(--ugme-muted); margin-bottom: 24px;">Only pending submissions can be deleted. This submission has already been reviewed.</p>
-        <a href="/apps/ugme/account?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">My submissions</a>
+        <a href="${PROXY_BASE}/account?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--outline" style="display: inline-block; width: auto;">My posts</a>
       </div>
     `;
     const html = proxyLayout({ title: "Can't Delete", brandName, logoUrl: shop.logoUrl, shopDomain: shop.shopDomain, body });
@@ -2113,7 +2161,7 @@ async function handleDeleteSubmission(submissionId: string, shop: ShopInfo, bran
   });
 
   // Redirect back to account page using client-side redirect (proxy doesn't forward 302)
-  const redirectUrl = `/apps/ugme/account?shop=${shop.shopDomain}&deleted=1`;
+  const redirectUrl = `${PROXY_BASE}/account?shop=${shop.shopDomain}&deleted=1`;
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>

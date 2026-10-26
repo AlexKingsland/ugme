@@ -1,28 +1,43 @@
 {%- comment -%}
-  Social Wall — an infinite, explorable 3D wall of approved customer content.
-  Campaigns are app-owned metaobjects that UGME syncs automatically, so the
-  merchant just picks them from the list in the block settings.
+  Social Wall — an infinite, explorable 3D wall of content from verified buyers.
+  Each block shows ONE wall campaign (picked in the block settings). Wall
+  campaigns are app-owned metaobjects synced by the app; the block renders
+  nothing on the live store unless its wall campaign is active.
 {%- endcomment -%}
 
 {%- liquid
-  assign campaign_ids = ''
-  for c in block.settings.campaigns
-    assign campaign_ids = campaign_ids | append: c.campaign_id.value | append: ','
-  endfor
+  assign wall = block.settings.wall_campaign
+  assign wall_id = wall.campaign_id.value
+  assign wall_status = wall.status.value
+  assign proxy_base = '/apps/social-wall'
   assign height = block.settings.height | append: 'vh'
   if block.settings.height_mobile
     assign height_mobile = block.settings.height_mobile | append: 'vh'
   else
     assign height_mobile = height
   endif
+  assign product_filter = ''
+  if block.settings.this_product_only and product
+    assign product_filter = product.id
+  endif
+  assign is_live = false
+  if wall_id != blank and wall_status == 'ACTIVE'
+    assign is_live = true
+  endif
 -%}
 
+{%- if is_live -%}
 <div
   id="ugme-canvas-{{ block.id }}"
   class="ugme-canvas-block"
   data-ugme-canvas
-  data-endpoint="/apps/ugme/canvas"
-  data-campaigns="{{ campaign_ids }}"
+  data-endpoint="{{ proxy_base }}/canvas"
+  data-wall="{{ wall_id }}"
+  data-product="{{ product_filter }}"
+  data-share="{{ block.settings.show_share }}"
+  data-share-label="{{ block.settings.share_label | escape }}"
+  data-share-url="{{ proxy_base }}/campaign/{{ wall_id }}/submit"
+  data-show-products="{{ block.settings.show_products }}"
   data-background="{{ block.settings.background }}"
   data-show-hint="{{ block.settings.show_hint }}"
   data-design-mode="{{ request.design_mode }}"
@@ -54,6 +69,19 @@
     #ugme-canvas-{{ block.id }} { --ugme-canvas-height: {{ height_mobile }}; }
   }
 </style>
+{%- elsif request.design_mode -%}
+  {%- comment -%} Theme editor only — shoppers never see this. {%- endcomment -%}
+  <div class="ugme-wall-placeholder" style="display:block;margin:24px auto;max-width:640px;padding:32px 24px;border:2px dashed #c9cccf;border-radius:12px;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#303030;background:#fafafa;">
+    <div style="font-size:16px;font-weight:650;margin-bottom:6px;">Social Wall</div>
+    {%- if wall_id == blank -%}
+      <div style="font-size:14px;color:#616161;line-height:1.5;">Pick a <b>Wall campaign</b> in this block's settings.<br>No wall campaigns yet? Create one in the Social Wall app, then reload the editor.</div>
+      <a href="/admin/apps/79239f951610fa45ab1160d2fe4438f6/app/walls/new" target="_top" style="display:inline-block;margin-top:14px;padding:9px 16px;border-radius:8px;background:#303030;color:#fff;text-decoration:none;font-size:13px;font-weight:600;">Create a wall campaign</a>
+    {%- else -%}
+      <div style="font-size:14px;color:#616161;line-height:1.5;"><b>{{ wall.title.value | escape }}</b> isn't active, so this block is hidden on your store.<br>Activate it in the Social Wall app to show it.</div>
+      <a href="/admin/apps/79239f951610fa45ab1160d2fe4438f6/app/walls/{{ wall_id }}" target="_top" style="display:inline-block;margin-top:14px;padding:9px 16px;border-radius:8px;background:#303030;color:#fff;text-decoration:none;font-size:13px;font-weight:600;">Open wall campaign</a>
+    {%- endif -%}
+  </div>
+{%- endif -%}
 
 {% schema %}
 {
@@ -62,11 +90,39 @@
   "javascript": "ugme-canvas-loader.js",
   "settings": [
     {
-      "type": "metaobject_list",
-      "id": "campaigns",
-      "label": "Campaigns",
+      "type": "metaobject",
+      "id": "wall_campaign",
+      "label": "Wall campaign",
       "metaobject_type": "app--425610215425--ugme_campaign",
-      "info": "Approved content from these UGME campaigns is shown. Leave empty to show all active campaigns."
+      "info": "Create and activate wall campaigns in the Social Wall app. The block stays hidden until its wall campaign is active."
+    },
+    {
+      "type": "checkbox",
+      "id": "this_product_only",
+      "label": "On product pages, only show posts of that product",
+      "default": false
+    },
+    {
+      "type": "header",
+      "content": "Share button"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_share",
+      "label": "Show “Share yours” button",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "share_label",
+      "label": "Button label",
+      "default": "Share yours"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_products",
+      "label": "Show product cards on posts",
+      "default": true
     },
     {
       "type": "text",

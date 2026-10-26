@@ -11,13 +11,31 @@ export type MediaItem = {
   width?: number | null;
   height?: number | null;
   caption?: string | null;
+  /** "Sam K." when the buyer opted in to showing their name */
+  author?: string | null;
+  /** Posts come from verified buyers */
+  verified?: boolean;
+  /** Products the buyer purchased — shown as product cards in the viewer */
+  products?: ProductRef[];
 };
+
+export type ProductRef = { id: string; title: string; handle: string | null; imageUrl: string | null };
 
 export type CanvasOptions = {
   /** JSON endpoint, normally the app proxy: /apps/ugme/canvas */
   endpoint?: string;
-  /** Campaign IDs to include; empty = all active campaigns for the shop */
+  /** Campaign IDs to include; empty = all active campaigns for the shop (legacy) */
   campaigns?: string[];
+  /** Wall campaign shown by this block */
+  wall?: string;
+  /** Product page filter: only posts of this product (numeric id or GID) */
+  product?: string;
+  /** "Share yours" button */
+  share?: boolean;
+  shareLabel?: string;
+  shareUrl?: string;
+  /** Product cards in the viewer */
+  showProducts?: boolean;
   /** Pass media directly instead of fetching (local playground, admin preview) */
   media?: MediaItem[];
   background?: string;

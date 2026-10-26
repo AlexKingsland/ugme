@@ -54,6 +54,7 @@ async function resolveContentUrl(contentUrl: string): Promise<string> {
 }
 
 import { campaignRewardLabel } from "../../utils/rewards/presenters";
+import { parseProducts } from "../../utils/wall-campaigns";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -65,7 +66,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     where: { id: params.id },
     include: {
       customer: { select: { email: true } },
-      campaign: { select: { id: true, title: true, moment: true, productId: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true, shopId: true } },
+      campaign: { select: { id: true, title: true, moment: true, status: true, productScope: true, products: true, captureSpecs: true, productId: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true, storeCreditAmount: true, shopId: true } },
       reward: { select: { status: true, cycles: true } },
     },
   });
@@ -110,6 +111,29 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       rewardLabel: campaignRewardLabel(submission.campaign),
       discountValue: submission.campaign.discountValue,
       rewardStatus: submission.reward?.status || null,
+      rewardType: submission.campaign.rewardType,
+      hasReward: submission.campaign.rewardType === "DISCOUNT_CODE" || submission.campaign.rewardType === "STORE_CREDIT",
+      products: parseProducts(submission.products),
+      showsName: submission.displayName,
+      wall: {
+        id: submission.campaign.id,
+        title: submission.campaign.title,
+        status: submission.campaign.status,
+        ask: submission.campaign.moment,
+        checklist: (() => {
+          try {
+            return (JSON.parse(submission.campaign.captureSpecs) as { label: string; description: string }[])
+              .filter((x) => x.label === "Requirement")
+              .map((x) => x.description);
+          } catch {
+            return [] as string[];
+          }
+        })(),
+        who:
+          submission.campaign.productScope === "ALL"
+            ? "Anyone who has ordered"
+            : `Buyers of ${parseProducts(submission.campaign.products).map((p) => p.title).join(", ") || "selected products"}`,
+      },
     },
     nextPendingId: nextPending?.id || null,
   });
@@ -190,7 +214,9 @@ const DENY_REASONS = [
 
 export default function SubmissionDetail() {
   const { submission, nextPendingId } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
+  const actionData = useActionData<typeof action>() as
+    | { success?: boolean; action?: string; error?: string; rewardStatus?: string; rewardError?: string }
+    | undefined;
   const submit = useSubmit();
   const navigation = useNavigation();
   const isActing = navigation.state === "submitting";
@@ -231,8 +257,12 @@ export default function SubmissionDetail() {
         <Box paddingBlockEnd="400">
           <Banner tone="success">
             {actionData.action === "approved"
-              ? `Approved! Reward of ${rewardText} has been issued.`
-              : "Submission denied. The customer will be notified."}
+              ? submission.hasReward
+                ? actionData.rewardStatus === "FAILED"
+                  ? actionData.rewardError || `Approved and added to your wall, but the reward couldn't be sent yet — it will be retried.`
+                  : `Approved and added to your wall. ${rewardText} sent to the customer.`
+                : "Approved and added to your wall."
+              : "Submission denied."}
           </Banner>
         </Box>
       )}
@@ -330,7 +360,9 @@ export default function SubmissionDetail() {
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd">Make a decision</Text>
                     <Text as="p" tone="subdued">
-                      Approving will schedule {rewardText} on {submission.displayName}'s subscription immediately.
+                      {submission.hasReward
+                        ? `Approving adds this submission to your wall and sends ${submission.displayName} ${rewardText}.`
+                        : "Approving adds this submission to your wall."}
                     </Text>
 
                     <InlineStack gap="200">
@@ -340,7 +372,7 @@ export default function SubmissionDetail() {
                         onClick={handleApprove}
                         loading={isActing}
                       >
-                        Approve + issue {rewardText}
+                        {submission.hasReward ? `Approve + send ${rewardText}` : "Approve"}
                       </Button>
                       <Button
                         tone="critical"
@@ -441,6 +473,60 @@ export default function SubmissionDetail() {
               </Card>
             )}
 
+            {/* What this submission is for */}
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h3" variant="headingMd">Wall campaign</Text>
+                  <Button variant="plain" url={`/app/walls/${submission.wall.id}`}>View</Button>
+                </InlineStack>
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">{submission.wall.title}</Text>
+                  <Badge tone={submission.wall.status === "ACTIVE" ? "success" : "attention"}>
+                    {submission.wall.status === "ACTIVE" ? "Active" : submission.wall.status === "PAUSED" ? "Paused" : "Draft"}
+                  </Badge>
+                </InlineStack>
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" tone="subdued">Asked for</Text>
+                  <Text as="p" variant="bodyMd">{submission.wall.ask}</Text>
+                  {submission.wall.checklist.map((c) => (
+                    <Text as="p" key={c} variant="bodySm" tone="subdued">• {c}</Text>
+                  ))}
+                </BlockStack>
+                <InlineStack align="space-between" gap="200">
+                  <Text as="span" variant="bodySm" tone="subdued">Reward</Text>
+                  <Text as="span" variant="bodySm">{rewardText}</Text>
+                </InlineStack>
+                <InlineStack align="space-between" gap="200" wrap={false}>
+                  <Text as="span" variant="bodySm" tone="subdued">Who can share</Text>
+                  <Text as="span" variant="bodySm" alignment="end">{submission.wall.who}</Text>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+
+            {/* Products the customer bought (shown as product cards on the wall) */}
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h3" variant="headingMd">Linked products</Text>
+                  <Badge tone="success">Verified purchase</Badge>
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">What this customer bought. Shoppers see these as product cards on the wall.</Text>
+                {submission.products.length ? (
+                  submission.products.map((p) => (
+                    <InlineStack key={p.id} gap="300" blockAlign="center" wrap={false}>
+                      <div style={{ width: 40, height: 40, flex: "0 0 40px", borderRadius: 8, overflow: "hidden", background: "var(--p-color-bg-surface-secondary)", border: "1px solid var(--p-color-border-secondary)" }}>
+                        {p.imageUrl && <img src={p.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+                      </div>
+                      <Text as="span" variant="bodyMd">{p.title}</Text>
+                    </InlineStack>
+                  ))
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">No products linked.</Text>
+                )}
+              </BlockStack>
+            </Card>
+
             {/* Submission info */}
             <Card>
               <BlockStack gap="200">
@@ -451,8 +537,8 @@ export default function SubmissionDetail() {
                   <Text as="span">{submission.email}</Text>
                 </InlineStack>
                 <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Campaign</Text>
-                  <Text as="span">{submission.campaignTitle}</Text>
+                  <Text as="span" tone="subdued">Name on the wall</Text>
+                  <Text as="span">{submission.showsName || "Hidden (shows “Verified buyer”)"}</Text>
                 </InlineStack>
                 <InlineStack align="space-between">
                   <Text as="span" tone="subdued">Type</Text>

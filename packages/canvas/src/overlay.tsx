@@ -1,5 +1,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { ProductCards } from "./products";
 import type { SelectedMedia } from "./types";
 
 const CloseIcon = () => (
@@ -12,7 +13,21 @@ const CloseIcon = () => (
  * Full-screen player. The <video> element is created (and play() called) in the
  * tap handler before this renders — here we just adopt it into the DOM.
  */
-export function MediaOverlay({ selected, onClose }: { selected: SelectedMedia; onClose: () => void }) {
+const CheckIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </svg>
+);
+
+export function MediaOverlay({
+  selected,
+  onClose,
+  showProducts = true,
+}: {
+  selected: SelectedMedia;
+  onClose: () => void;
+  showProducts?: boolean;
+}) {
   const mediaRef = React.useRef<HTMLDivElement>(null);
   const [buffering, setBuffering] = React.useState(selected.item.type === "video");
   const { item, video, origin } = selected;
@@ -60,7 +75,10 @@ export function MediaOverlay({ selected, onClose }: { selected: SelectedMedia; o
         }
         onClick={(e) => e.target === e.currentTarget && onClose()}
       >
-        <div className="ugme-overlay__media" ref={mediaRef}>
+        <div
+          className={`ugme-overlay__media${showProducts && item.products?.length ? " ugme-overlay__media--with-products" : ""}`}
+          ref={mediaRef}
+        >
           {item.type === "image" && <img src={item.src} alt={item.caption || ""} />}
           {item.type === "video" && buffering && (
             <div className="ugme-overlay__buffer">
@@ -68,7 +86,16 @@ export function MediaOverlay({ selected, onClose }: { selected: SelectedMedia; o
             </div>
           )}
         </div>
-        {item.caption && <div className="ugme-overlay__caption">{item.caption}</div>}
+        <div className="ugme-overlay__meta">
+          {item.verified !== false && (
+            <span className="ugme-overlay__verified">
+              <CheckIcon />
+              Verified buyer
+            </span>
+          )}
+          {item.author && <span className="ugme-overlay__author">{item.author}</span>}
+        </div>
+        {showProducts && item.products && item.products.length > 0 && <ProductCards products={item.products} />}
       </div>
     </div>,
     document.body,

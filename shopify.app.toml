@@ -1,35 +1,36 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "79239f951610fa45ab1160d2fe4438f6"
-name = "cloverkit-ugme"
-application_url = "https://localhost:3458"
+name = "Social Wall"
+handle = "cloverkit-social-wall"
+application_url = "https://social-wall.cloverkitstudio.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_customers,write_metaobjects,write_discounts"
+scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,write_store_credit_account_transactions"
 
 [webhooks]
 api_version = "2026-10"
 
 [auth]
-redirect_urls = [ "https://localhost:3458/api/auth" ]
+redirect_urls = [ "https://social-wall.cloverkitstudio.com/api/auth" ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true
 
 [app_proxy]
-url = "https://localhost:3458/api/proxy"
-subpath = "ugme"
+url = "https://social-wall.cloverkitstudio.com/api/proxy"
+subpath = "social-wall"
 prefix = "apps"
 
 # ── Social Wall ──────────────────────────────────────────────────
-# App-owned metaobject mirroring each campaign, so merchants can pick campaigns
-# from a list in the "Social Wall" theme block. Entries are written by
-# app/utils/canvas.server.ts (syncCampaignMetaobjects).
+# App-owned metaobject mirroring each wall campaign, so merchants can pick one
+# in the "Social Wall" theme block. Entries are written by
+# app/utils/canvas.server.ts (syncCampaignMetaobjects). `status` lets the block
+# hide itself unless the wall campaign is ACTIVE.
 [metaobjects.app.ugme_campaign]
-name = "UGME campaign"
-description = "A UGME content campaign, selectable in the Social Wall theme block"
+name = "Wall campaign"
+description = "A Social Wall campaign, selectable in the Social Wall theme block"
 display_name_field = "title"
 access.admin = "merchant_read"
 access.storefront = "public_read"

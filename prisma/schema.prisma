@@ -67,8 +67,10 @@ enum DiscountType {
 }
 
 enum RewardType {
+  NONE                  // just being featured on the wall
   DISCOUNT_CODE
-  SUBSCRIPTION_DISCOUNT
+  STORE_CREDIT
+  SUBSCRIPTION_DISCOUNT // legacy — no longer offered for new wall campaigns
 }
 
 enum BillingFrequency {
@@ -136,6 +138,9 @@ model Campaign {
   productId        String?        // Shopify product GID
   productTitle     String?        // Product name for display
   productImageUrl  String?        // Product image URL for hero display
+  // Wall campaign products: who counts as a verified buyer
+  productScope     String         @default("SPECIFIC") // "SPECIFIC" | "ALL"
+  products         String         @default("[]") // JSON [{ id, title, handle, imageUrl }]
   contentType      ContentType      @default(VIDEO)
   captureSpecs     String         @default("[]") // JSON array of spec objects
   rewardType       RewardType     @default(DISCOUNT_CODE)
@@ -149,9 +154,13 @@ model Campaign {
   discountCodeType      String?        // "PERCENTAGE" or "FIXED_AMOUNT"
   discountCodeExpiryDays Int?          // e.g. 30 days from approval
   discountCodeMinOrder  Float?         // minimum order amount to use code
+  // Store credit fields
+  storeCreditAmount     Float?
+  storeCreditExpiryDays Int?
   startDate        DateTime?
   endDate          DateTime?
   maxSubmissions   Int?
+  rightsAcknowledgedAt DateTime?  // merchant accepted the usage rights agreement
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -196,6 +205,8 @@ model Submission {
   durationSecs  Int?
   description   String?
   subscriptionId String?          // Recharge (or other provider) subscription ID tied to this submission
+  products      String         @default("[]") // JSON [{ id, title, handle, imageUrl }] — wall products this verified buyer purchased (product cards)
+  displayName   String?        // "Sam K." — only set when the customer opted in to showing their name
   markedUsed    Boolean        @default(false)
   usageTags     String         @default("[]")
   rightsAccepted Boolean       @default(false)
@@ -225,6 +236,7 @@ model Reward {
   rechargeChargeId   String?
   rechargeSubscriptionId String?
   discountCode       String?
+  storeCreditAmount  Float?           // store credit rewards: amount credited
   appliedAt          DateTime?
   expiresAt          DateTime?        // discount-code rewards: when the code stops working
   status             RewardStatus         @default(CREATED)

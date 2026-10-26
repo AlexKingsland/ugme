@@ -1,5 +1,5 @@
 /*
- * UGME Canvas — tiny loader (~1 KB). Loaded by the app block on every page that
+ * Social Wall — tiny loader (~1 KB). Loaded by the app block on every page that
  * has the block. It only pulls in the heavy 3D bundle (ugme-canvas.js) once the
  * block is about to scroll into view, so it doesn't hurt page speed.
  * Also re-mounts in the theme editor when the block is added/changed/removed.
@@ -29,9 +29,15 @@
   // instead of one after the other. The bundle picks up root.__ugmeData.
   function prefetchData(root) {
     if (root.__ugmeData || !window.fetch) return;
-    var endpoint = root.getAttribute("data-endpoint") || "/apps/ugme/canvas";
-    var campaigns = root.getAttribute("data-campaigns") || "";
-    var url = endpoint + (campaigns ? (endpoint.indexOf("?") < 0 ? "?" : "&") + "campaigns=" + encodeURIComponent(campaigns.replace(/,+$/, "")) : "");
+    var endpoint = root.getAttribute("data-endpoint") || "/apps/social-wall/canvas";
+    var params = [];
+    var wall = root.getAttribute("data-wall") || "";
+    var campaigns = (root.getAttribute("data-campaigns") || "").replace(/,+$/, "");
+    var product = root.getAttribute("data-product") || "";
+    if (wall) params.push("wall=" + encodeURIComponent(wall));
+    else if (campaigns) params.push("campaigns=" + encodeURIComponent(campaigns));
+    if (product) params.push("product=" + encodeURIComponent(product));
+    var url = endpoint + (params.length ? (endpoint.indexOf("?") < 0 ? "?" : "&") + params.join("&") : "");
     root.__ugmeData = fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (data) {

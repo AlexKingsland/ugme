@@ -14,6 +14,18 @@ const KEY_MAP: Record<string, string> = {
   e: "up", q: "down",
 };
 
+const PlayIcon = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M8 5.5v13l11-6.5z" />
+  </svg>
+);
+
+const ShareIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
 const ExpandIcon = ({ full }: { full: boolean }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     {full ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
@@ -25,13 +37,22 @@ type LoadState =
   | { status: "error"; message: string }
   | { status: "ready"; media: MediaItem[] };
 
-async function fetchMedia(endpoint: string, campaigns: string[]): Promise<MediaItem[]> {
-  const url = new URL(endpoint, window.location.origin);
-  if (campaigns.length) url.searchParams.set("campaigns", campaigns.join(","));
+export function mediaUrl(options: CanvasOptions): string {
+  const url = new URL(options.endpoint || "/apps/social-wall/canvas", window.location.origin);
+  if (options.wall) url.searchParams.set("wall", options.wall);
+  else if (options.campaigns?.length) url.searchParams.set("campaigns", options.campaigns.join(","));
+  if (options.product) url.searchParams.set("product", options.product);
+  return url.toString();
+}
+
+type WallInfo = { spotsLeft?: number | null } | null;
+type MediaResponse = { items?: MediaItem[]; wall?: WallInfo };
+
+async function fetchMedia(options: CanvasOptions): Promise<MediaResponse> {
+  const url = new URL(mediaUrl(options));
   const res = await fetch(url.toString(), { headers: { Accept: "application/json" }, credentials: "same-origin" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = (await res.json()) as { items?: MediaItem[] };
-  return data.items ?? [];
+  return (await res.json()) as MediaResponse;
 }
 
 export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root: HTMLElement }) {
@@ -43,6 +64,8 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
   const [progress, setProgress] = React.useState<{ loaded: number; total: number } | null>(null);
   const [hintVisible, setHintVisible] = React.useState(options.showHint !== false);
   const [full, setFull] = React.useState(false);
+  // The wall's submission limit is reached → no "Share yours" button
+  const [wallFull, setWallFull] = React.useState(false);
 
   const pool = React.useMemo(() => new VideoPool(), []);
   const pausedRef = React.useRef(false);
@@ -55,16 +78,18 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
     let alive = true;
     // The loader script usually started this request already (in parallel with
     // downloading this bundle) — reuse it if so.
-    const prefetched = (root as HTMLElement & { __ugmeData?: Promise<{ items?: MediaItem[] }> | null }).__ugmeData;
-    (prefetched
-      ? prefetched.then((d) => d.items ?? []).catch(() => fetchMedia(options.endpoint || "/apps/ugme/canvas", options.campaigns || []))
-      : fetchMedia(options.endpoint || "/apps/ugme/canvas", options.campaigns || []))
-      .then((media) => alive && setState({ status: "ready", media }))
+    const prefetched = (root as HTMLElement & { __ugmeData?: Promise<MediaResponse> | null }).__ugmeData;
+    (prefetched ? prefetched.catch(() => fetchMedia(options)) : fetchMedia(options))
+      .then((data) => {
+        if (!alive) return;
+        setWallFull(data.wall?.spotsLeft === 0);
+        setState({ status: "ready", media: data.items ?? [] });
+      })
       .catch((err) => alive && setState({ status: "error", message: String(err?.message || err) }));
     return () => {
       alive = false;
     };
-  }, [options.endpoint, options.campaigns, options.media]);
+  }, [options.endpoint, options.campaigns, options.wall, options.product, options.media]);
 
   // ── preload all thumbnails, then reveal the wall in one go ──
   React.useEffect(() => {
@@ -196,11 +221,24 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
       )}
       {state.status === "ready" && state.media.length === 0 && (
         <div className="ugme-canvas__state">
-          <div>
-            <b>No content yet</b>
-            {options.designMode
-              ? "Approved submissions from the selected campaigns will appear here. Pick campaigns in the block settings."
-              : "Check back soon."}
+          <div className="ugme-empty">
+            <div className="ugme-empty__tiles" aria-hidden="true">
+              <span className="ugme-empty__tile ugme-empty__tile--l"><PlayIcon /></span>
+              <span className="ugme-empty__tile ugme-empty__tile--c"><PlayIcon /></span>
+              <span className="ugme-empty__tile ugme-empty__tile--r"><PlayIcon /></span>
+            </div>
+            <h3 className="ugme-empty__title">{options.designMode ? "No approved posts yet" : "Be the first on the wall"}</h3>
+            <p className="ugme-empty__text">
+              {options.designMode
+                ? "Approved submissions from this wall campaign will appear here."
+                : "Bought something you love? Share a video of it and get featured here."}
+            </p>
+            {options.share && options.shareUrl && !wallFull && (
+              <a className="ugme-empty__cta" href={options.shareUrl}>
+                <ShareIcon />
+                <span>{options.shareLabel || "Share yours"}</span>
+              </a>
+            )}
           </div>
         </div>
       )}
@@ -209,6 +247,12 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
         <>
           {options.showHint !== false && (
             <div className={`ugme-canvas__chip${hintVisible ? "" : " ugme-canvas__chip--hidden"}`}>{hint}</div>
+          )}
+          {options.share && options.shareUrl && !wallFull && (
+            <a className="ugme-canvas__share" href={options.shareUrl}>
+              <ShareIcon />
+              <span>{options.shareLabel || "Share yours"}</span>
+            </a>
           )}
           <button
             type="button"
@@ -221,7 +265,7 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
         </>
       )}
 
-      {selected && <MediaOverlay selected={selected} onClose={close} />}
+      {selected && <MediaOverlay selected={selected} onClose={close} showProducts={options.showProducts !== false} />}
     </>
   );
 }

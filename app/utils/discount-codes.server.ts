@@ -29,10 +29,10 @@ function customerGid(id: string) {
   return id.startsWith("gid://") ? id : `gid://shopify/Customer/${id}`;
 }
 
-/** Deterministic, human-friendly code: UGME-SUMMERRUN-7F3K2Q */
+/** Deterministic, human-friendly code: WALL-SUMMERRUN-7F3K2Q */
 export function rewardCodeFor(campaignTitle: string, submissionId: string) {
   const slug = campaignTitle.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10).toUpperCase() || "REWARD";
-  return `UGME-${slug}-${submissionId.slice(-6).toUpperCase()}`;
+  return `WALL-${slug}-${submissionId.slice(-6).toUpperCase()}`;
 }
 
 async function gql(admin: AdminGraphqlClient, query: string, variables: Record<string, unknown>) {

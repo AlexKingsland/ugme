@@ -132,7 +132,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }`,
       {
         variables: {
-          name: `UGME ${plan.name}`,
+          name: `Social Wall ${plan.name}`,
           lineItems: [
             {
               plan: {
@@ -146,7 +146,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               },
             },
           ],
-          returnUrl: `https://${session.shop}/admin/apps/ugme/app/settings/billing?charge_activated=true&plan=${targetPlan}`,
+          returnUrl: `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/settings/billing?charge_activated=true&plan=${targetPlan}`,
           test: process.env.NODE_ENV !== "production",
         },
       },

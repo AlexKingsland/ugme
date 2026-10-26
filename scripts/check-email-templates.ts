@@ -18,13 +18,14 @@ const base = {
 };
 const cases: [string, RewardDetails][] = [];
 for (const valueType of ["PERCENTAGE", "FIXED_AMOUNT"] as const) {
-  cases.push([`code-${valueType}`, { kind: "DISCOUNT_CODE", code: "UGME-TEST-ABC123", valueType, amount: valueType === "PERCENTAGE" ? 20 : 7.5 }]);
-  cases.push([`code-${valueType}-min-expiry`, { kind: "DISCOUNT_CODE", code: "UGME-TEST-ABC123", valueType, amount: 15, minimumSubtotal: 50, expiresAt: new Date("2026-12-01") }]);
+  cases.push([`code-${valueType}`, { kind: "DISCOUNT_CODE", code: "WALL-TEST-ABC123", valueType, amount: valueType === "PERCENTAGE" ? 20 : 7.5 }]);
+  cases.push([`code-${valueType}-min-expiry`, { kind: "DISCOUNT_CODE", code: "WALL-TEST-ABC123", valueType, amount: 15, minimumSubtotal: 50, expiresAt: new Date("2026-12-01") }]);
 }
 for (const discountType of ["FREE", "PERCENTAGE", "FIXED_AMOUNT"] as const)
   for (const frequency of ["DAY", "WEEK", "MONTH"] as const)
     for (const cycles of [1, 3])
-      cases.push([`sub-${discountType}-${cycles}x${frequency}`, { kind: "SUBSCRIPTION_DISCOUNT", discountType, value: discountType === "PERCENTAGE" ? 25 : 10, cycles, frequency, code: cycles > 1 ? "UGME-SUB-XYZ" : null }]);
+      cases.push([`sub-${discountType}-${cycles}x${frequency}`, { kind: "SUBSCRIPTION_DISCOUNT", discountType, value: discountType === "PERCENTAGE" ? 25 : 10, cycles, frequency, code: cycles > 1 ? "WALL-SUB-XYZ" : null }]);
+cases.push(["featured", { kind: "FEATURED" }]);
 cases.push(["store-credit", { kind: "STORE_CREDIT", amount: 15 }]);
 cases.push(["store-credit-expiry", { kind: "STORE_CREDIT", amount: 12.5, expiresAt: new Date("2027-01-31") }]);
 
@@ -37,7 +38,9 @@ for (const [name, reward] of cases) {
     if (/undefined|NaN|\[object |null(?![a-z])/.test(body)) problems.push(`${part} contains undefined/NaN/null`);
   }
   if (e.subject.length > 78) problems.push(`subject too long (${e.subject.length})`);
-  if (!/How to use it/.test(e.html)) problems.push("missing how-to section");
+  if (!/How to use it|What happens next/.test(e.html)) problems.push("missing how-to section");
+  if (/UGME|UG-ME/.test(e.html + e.text + e.subject)) problems.push("mentions UGME (customers should only see the brand)");
+  if (!e.html.includes("/apps/social-wall/account")) problems.push("account link not on /apps/social-wall");
   writeFileSync(`.email-previews/matrix/${name}.html`, e.html);
   if (problems.length) failures++;
   console.log(`${problems.length ? "✗" : "✓"} ${name.padEnd(30)} ${e.subject}${problems.length ? `\n    ${problems.join("; ")}` : ""}`);

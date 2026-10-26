@@ -24,7 +24,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
-  // Keep campaigns pickable in the theme editor's Social Wall block (throttled, non-blocking)
+  // Keep wall campaigns pickable in the theme editor's Social Wall block (throttled, non-blocking)
   maybeSyncCampaignMetaobjects(admin.graphql, session.shop);
 
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
@@ -39,9 +39,8 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
-        <Link to="/app/campaigns">Campaigns</Link>
-        <Link to="/app/library">Library</Link>
-        <Link to="/app/social-wall">Social Wall</Link>
+        <Link to="/app/walls">Wall campaigns</Link>
+        <Link to="/app/library">Submissions</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />

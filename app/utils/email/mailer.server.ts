@@ -36,7 +36,7 @@ export interface SentEmail {
   id: string;
 }
 
-const DEFAULT_FROM = "UGME Rewards <onboarding@resend.dev>";
+const DEFAULT_FROM = "Social Wall <onboarding@resend.dev>";
 
 function fromHeader(fromName?: string) {
   const configured = process.env.EMAIL_FROM || DEFAULT_FROM;

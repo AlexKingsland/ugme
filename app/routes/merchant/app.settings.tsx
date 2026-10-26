@@ -302,27 +302,11 @@ export default function SettingsPage() {
   return (
     <Page title="Settings">
       <Layout>
-        {/* Setup banner for new shops */}
-        {needsSetup && (
-          <Layout.Section>
-            <Banner
-              title="Connect your subscription provider"
-              tone="warning"
-            >
-              <p>
-                UGME needs access to your subscription platform to apply
-                discount rewards when you approve customer submissions. Set up
-                the connection below to get started.
-              </p>
-            </Banner>
-          </Layout.Section>
-        )}
-
         {/* Plan & billing */}
         <Layout.AnnotatedSection
           id="billing"
           title="Plan & billing"
-          description="Manage your UGME subscription plan and view current usage."
+          description="Manage your Social Wall plan and view current usage."
         >
           <Card>
             <BlockStack gap="300">
@@ -342,217 +326,11 @@ export default function SettingsPage() {
           </Card>
         </Layout.AnnotatedSection>
 
-        {/* Subscription Provider Connection — the main onboarding section */}
-        <Layout.AnnotatedSection
-          id="provider"
-          title="Subscription provider"
-          description="Connect the subscription platform that manages your customers' recurring orders. UGME uses this connection to apply subscription discounts when you approve submissions."
-        >
-          {shop.providerConnected ? (
-            /* Connected state */
-            <Card>
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <InlineStack gap="300" blockAlign="center">
-                    <Text as="h2" variant="headingMd">
-                      {shop.subscriptionProvider === "RECHARGE"
-                        ? "ReCharge"
-                        : "Shopify Native Subscriptions"}
-                    </Text>
-                    <Badge tone="success">Connected</Badge>
-                  </InlineStack>
-                  <Button variant="plain" tone="critical" onClick={handleDisconnect}>
-                    Disconnect
-                  </Button>
-                </InlineStack>
-                <Divider />
-                {shop.subscriptionProvider === "RECHARGE" && shop.providerApiKey && (
-                  <InlineStack align="space-between">
-                    <Text as="span" tone="subdued">API token</Text>
-                    <Text as="span" fontWeight="medium">{shop.providerApiKey}</Text>
-                  </InlineStack>
-                )}
-                {shop.subscriptionProvider === "SHOPIFY_NATIVE" && (
-                  <Text as="p" tone="subdued">
-                    Using your Shopify admin access to create discount codes via
-                    the GraphQL API. No additional credentials needed.
-                  </Text>
-                )}
-                <Banner tone="success">
-                  UGME will automatically create and apply discount codes when
-                  you approve customer submissions.
-                </Banner>
-              </BlockStack>
-            </Card>
-          ) : (
-            /* Setup / disconnected state */
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">
-                  Choose your subscription platform
-                </Text>
-
-                <Select
-                  label="Provider"
-                  options={[
-                    {
-                      label: "Shopify Native Subscriptions",
-                      value: "SHOPIFY_NATIVE",
-                    },
-                    { label: "ReCharge", value: "RECHARGE" },
-                  ]}
-                  value={subscriptionProvider}
-                  onChange={setSubscriptionProvider}
-                  helpText={
-                    subscriptionProvider === "SHOPIFY_NATIVE"
-                      ? "Also works with Loop, Bold, Appstle, and Seal — any provider that uses Shopify's native discount codes."
-                      : "Connect directly to ReCharge's API to create and apply discounts."
-                  }
-                />
-
-                <Divider />
-
-                {subscriptionProvider === "SHOPIFY_NATIVE" ? (
-                  <BlockStack gap="300">
-                    <Text as="h3" variant="headingSm">
-                      Shopify Native Discounts
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      UGME will use your Shopify admin connection to create
-                      discount codes via the{" "}
-                      <Text as="span" fontWeight="medium">
-                        discountCodeBasicCreate
-                      </Text>{" "}
-                      GraphQL mutation. Each approved submission generates a
-                      unique code with a{" "}
-                      <Text as="span" fontWeight="medium">
-                        recurringCycleLimit
-                      </Text>{" "}
-                      matching the campaign's reward cycles.
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      No additional API keys required — UGME uses the access
-                      already granted during app installation.
-                    </Text>
-
-                    {/* Test result */}
-                    {testFetcher.data && (
-                      <Banner
-                        tone={testFetcher.data.success ? "success" : "critical"}
-                      >
-                        <p>
-                          {testFetcher.data.success
-                            ? testFetcher.data.message
-                            : testFetcher.data.error}
-                        </p>
-                      </Banner>
-                    )}
-
-                    <InlineStack gap="300">
-                      <Button onClick={handleTestConnection} loading={isTesting}>
-                        Test connection
-                      </Button>
-                      {connectionTested && (
-                        <Button
-                          variant="primary"
-                          onClick={handleConnectProvider}
-                          loading={isSaving}
-                        >
-                          Save & activate
-                        </Button>
-                      )}
-                    </InlineStack>
-                  </BlockStack>
-                ) : (
-                  <BlockStack gap="300">
-                    <Text as="h3" variant="headingSm">
-                      ReCharge API Connection
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      UGME needs a ReCharge API token with permissions to create
-                      and apply discounts. You can generate one in your ReCharge
-                      dashboard under{" "}
-                      <Text as="span" fontWeight="medium">
-                        Settings → API tokens
-                      </Text>
-                      .
-                    </Text>
-
-                    <CalloutCard
-                      title="Required API permissions"
-                      illustration="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                      primaryAction={{
-                        content: "Open ReCharge docs",
-                        url: "https://docs.rechargepayments.com/docs/api-tokens",
-                        external: true,
-                      }}
-                    >
-                      <p>
-                        Your token needs <strong>read &amp; write</strong> access
-                        to <strong>Discounts</strong> and{" "}
-                        <strong>Addresses</strong>.
-                      </p>
-                    </CalloutCard>
-
-                    <TextField
-                      label="ReCharge API token"
-                      value={providerApiKey}
-                      onChange={setProviderApiKey}
-                      placeholder="sk_1x2y3z4..."
-                      type="password"
-                      helpText="Your token is encrypted before storage and never exposed in the UI."
-                      autoComplete="off"
-                    />
-
-                    {/* Test result */}
-                    {testFetcher.data && (
-                      <Banner
-                        tone={testFetcher.data.success ? "success" : "critical"}
-                      >
-                        <p>
-                          {testFetcher.data.success
-                            ? testFetcher.data.message
-                            : testFetcher.data.error}
-                        </p>
-                      </Banner>
-                    )}
-
-                    {actionData && !actionData.success && actionData.intent === "connect-provider" && (
-                      <Banner tone="critical">
-                        <p>{actionData.error}</p>
-                      </Banner>
-                    )}
-
-                    <InlineStack gap="300">
-                      <Button
-                        onClick={handleTestConnection}
-                        loading={isTesting}
-                        disabled={!providerApiKey.trim()}
-                      >
-                        Test connection
-                      </Button>
-                      {connectionTested && (
-                        <Button
-                          variant="primary"
-                          onClick={handleConnectProvider}
-                          loading={isSaving}
-                        >
-                          Save & activate
-                        </Button>
-                      )}
-                    </InlineStack>
-                  </BlockStack>
-                )}
-              </BlockStack>
-            </Card>
-          )}
-        </Layout.AnnotatedSection>
-
         {/* Brand settings */}
         <Layout.AnnotatedSection
           id="brand"
           title="Brand"
-          description="How your brand appears to customers in the submission portal."
+          description="How your brand appears to customers on share pages and in emails."
         >
           <Card>
             <FormLayout>
@@ -561,7 +339,7 @@ export default function SettingsPage() {
                 value={brandName}
                 onChange={setBrandName}
                 placeholder="My Awesome Brand"
-                helpText="Shown to customers when they submit content"
+                helpText="Shown to customers on the share page and in emails"
                 autoComplete="off"
               />
               <TextField
@@ -569,7 +347,7 @@ export default function SettingsPage() {
                 value={logoUrl}
                 onChange={setLogoUrl}
                 placeholder="https://example.com/logo.png"
-                helpText="Your brand logo for the submission portal"
+                helpText="Your logo for the share page and emails"
                 autoComplete="off"
               />
               <InlineStack align="end">
@@ -581,32 +359,6 @@ export default function SettingsPage() {
           </Card>
         </Layout.AnnotatedSection>
 
-        {/* Rewards settings */}
-        <Layout.AnnotatedSection
-          id="rewards"
-          title="Rewards"
-          description="Default reward settings for new campaigns. Individual campaigns can override these."
-        >
-          <Card>
-            <FormLayout>
-              <TextField
-                label="Default reward cycles"
-                type="number"
-                value={defaultRewardCycles}
-                onChange={setDefaultRewardMonths}
-                min={1}
-                max={12}
-                helpText="Number of free subscription cycles given for approved submissions"
-                autoComplete="off"
-              />
-              <InlineStack align="end">
-                <Button onClick={handleSaveRewards} loading={isSaving}>
-                  Save rewards
-                </Button>
-              </InlineStack>
-            </FormLayout>
-          </Card>
-        </Layout.AnnotatedSection>
       </Layout>
 
     </Page>

@@ -5,6 +5,7 @@
  * HTML is table-based with inline styles so it renders in Gmail/Outlook/Apple Mail.
  */
 import { esc, presentReward, type RewardDetails } from "../rewards/presenters";
+import { PROXY_BASE } from "../proxy-path";
 
 export type { RewardDetails } from "../rewards/presenters";
 
@@ -22,12 +23,13 @@ export interface ApprovedEmailInput {
 
 export function submissionApprovedEmail(input: ApprovedEmailInput) {
   const shopUrl = `https://${input.shopDomain}`;
-  const accountUrl = `${shopUrl}/apps/ugme/account`;
+  const accountUrl = `${shopUrl}${PROXY_BASE}/account`;
   const media = input.contentType === "VIDEO" ? "video" : "photo";
   const p = presentReward(input.reward, {
     shopUrl,
     accountUrl,
     customerEmail: input.customerEmail,
+    brandName: input.brandName,
     productTitle: input.productTitle,
     currency: input.currency,
   });
@@ -56,26 +58,26 @@ export function submissionApprovedEmail(input: ApprovedEmailInput) {
     <tr><td style="padding:24px 32px;border-bottom:1px solid #f0f0f0;">${logo}</td></tr>
     <tr><td style="padding:32px 32px 8px;">
       <div style="font-size:26px;font-weight:800;line-height:1.25;margin:0 0 10px;">You're approved! 🎉</div>
-      <div style="font-size:16px;line-height:1.55;color:#374151;">Thanks for sharing your ${media} for <b>${esc(input.campaignTitle)}</b>. ${esc(input.brandName)} loved it and approved your submission.</div>
+      <div style="font-size:16px;line-height:1.55;color:#374151;">Thanks for sharing your ${media}! ${esc(input.brandName)} loved it and added it to their Social Wall.</div>
     </td></tr>
     <tr><td style="padding:20px 32px;">
       <div style="background:#ecfdf5;border-radius:14px;padding:24px;text-align:center;">
-        <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#065f46;font-weight:600;margin-bottom:6px;">Your reward</div>
+        <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#065f46;font-weight:600;margin-bottom:6px;">${esc(p.cardLabel || "Your reward")}</div>
         <div style="font-size:30px;font-weight:800;color:#064e3b;line-height:1.1;">${esc(p.headline)}</div>
         <div style="font-size:15px;color:#065f46;margin:2px 0 12px;">${esc(p.sub)}</div>
         ${codeBox}${facts}${note}
       </div>
     </td></tr>
     <tr><td style="padding:4px 32px 8px;">
-      <div style="font-size:15px;font-weight:700;margin-bottom:8px;">How to use it</div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:8px;">${esc(p.stepsTitle || "How to use it")}</div>
       <ol style="margin:0;padding-left:20px;font-size:15px;line-height:1.6;color:#374151;">${p.howToHtml.map((h) => `<li style="margin-bottom:4px;">${h}</li>`).join("")}</ol>
     </td></tr>
     <tr><td align="center" style="padding:24px 32px 32px;">
       <a href="${esc(p.cta.url)}" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 26px;border-radius:999px;">${esc(p.cta.label)}</a>
-      <div style="font-size:13px;color:#6b7280;margin-top:14px;"><a href="${esc(accountUrl)}" style="color:#6b7280;">See all your submissions and rewards</a></div>
+      <div style="font-size:13px;color:#6b7280;margin-top:14px;"><a href="${esc(accountUrl)}" style="color:#6b7280;">See all your posts and rewards</a></div>
     </td></tr>
     <tr><td style="padding:18px 32px;background:#fafafa;border-top:1px solid #f0f0f0;font-size:12px;line-height:1.5;color:#9ca3af;">
-      You're receiving this because you submitted a ${media} to ${esc(input.brandName)}. Powered by UGME.
+      You're receiving this because you submitted a ${media} to ${esc(input.brandName)}. 
     </td></tr>
   </table>
 </td></tr></table>
@@ -83,13 +85,13 @@ export function submissionApprovedEmail(input: ApprovedEmailInput) {
 
   const text = `You're approved!
 
-Thanks for sharing your ${media} for "${input.campaignTitle}". ${input.brandName} approved your submission.
+Thanks for sharing your ${media}! ${input.brandName} loved it and added it to their Social Wall.
 
 ${p.text}
 
-See all your submissions and rewards: ${accountUrl}
+See all your posts and rewards: ${accountUrl}
 
-You're receiving this because you submitted a ${media} to ${input.brandName}. Powered by UGME.`;
+You're receiving this because you submitted a ${media} to ${input.brandName}. `;
 
   return { subject, html, text };
 }

@@ -120,7 +120,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     where,
     include: {
       customer: { select: { email: true } },
-      campaign: { select: { title: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true } },
+      campaign: { select: { title: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true, storeCreditAmount: true } },
     },
     orderBy: { createdAt: tab === "pending" ? (sort === "oldest" ? "asc" : "desc") : "desc" },
   });
@@ -223,8 +223,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       data: {
         status: "REJECTED",
         reviewedAt: new Date(),
-        rejectionReason: reason || "Does not meet campaign requirements",
-        reviewNote: reason || "Does not meet campaign requirements",
+        rejectionReason: reason || "Does not meet the requirements",
+        reviewNote: reason || "Does not meet the requirements",
       },
     });
     return json({ success: true });
@@ -311,7 +311,7 @@ export default function Library() {
     const formData = new FormData();
     formData.set("submissionId", submissionId);
     formData.set("_action", "deny");
-    formData.set("reason", "Does not meet campaign requirements");
+    formData.set("reason", "Does not meet the requirements");
     submit(formData, { method: "post" });
   }, [submit]);
 
@@ -344,7 +344,7 @@ export default function Library() {
   return (
     <Page
       backAction={{ content: "Dashboard", url: "/app" }}
-      title="Library"
+      title="Submissions"
       secondaryActions={
         !isPending && selectedAssets.size > 0
           ? [{ content: `Export selected (${selectedAssets.size})` }]
@@ -401,9 +401,9 @@ export default function Library() {
           <InlineStack gap="300" blockAlign="end">
             <Box width="240px">
               <Select
-                label="Campaign"
+                label="Wall campaign"
                 options={[
-                  { label: "All campaigns", value: "all" },
+                  { label: "All wall campaigns", value: "all" },
                   ...campaigns.map((c: any) => ({ label: c.title, value: c.id })),
                 ]}
                 value={currentCampaign}

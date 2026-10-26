@@ -1,8 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { SubmissionThumbnail } from "../../components/SubmissionThumbnail";
-import { extractKeyFromContentUrl, getPresignedDownloadUrl } from "../../utils/r2.server";
 import {
   Page,
   Layout,
@@ -16,168 +14,146 @@ import {
   ResourceItem,
   Box,
   InlineGrid,
-  Divider,
   Banner,
   ProgressBar,
+  Thumbnail,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { SubmissionThumbnail } from "../../components/SubmissionThumbnail";
+import { extractKeyFromContentUrl, getPresignedDownloadUrl } from "../../utils/r2.server";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
-
-import {
-  getPlan,
-  checkStorageLimit,
-  checkSubmissionLimit,
-  type PlanTierKey,
-} from "../../utils/plans.server";
+import { getPlan, type PlanTierKey } from "../../utils/plans.server";
 import { formatBytes } from "../../utils/format";
+import { parseProducts } from "../../utils/wall-campaigns";
+import { campaignRewardLabel } from "../../utils/rewards/presenters";
+
+const ROW_H = 72;
+const ROW_GAP = 4;
+const PLACEHOLDER_IMG = "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-product-1_small.png";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
+  if (!shop) return redirect("/app/walls");
 
-  const shop = await prisma.shop.findFirst({
-    where: { shopDomain: session.shop },
-  });
-
-  if (!shop) {
-    return json({
-      stats: { activeCampaigns: 0, totalSubmissions: 0, pendingReview: 0, rewardsApplied: 0 },
-      recentSubmissions: [],
-      activeCampaigns: [],
-      shopExists: false,
-      providerConnected: false,
-      storage: { usedBytes: 0, plan: getPlan("FREE") },
-      submissions: { monthlyCount: 0, plan: getPlan("FREE") },
-    });
-  }
-
-  const [activeCampaigns, totalSubmissions, pendingReview, rewardsApplied, storageAgg] =
-    await Promise.all([
-      prisma.campaign.count({ where: { shopId: shop.id, status: "ACTIVE" } }),
-      prisma.submission.count({ where: { campaign: { shopId: shop.id } } }),
-      prisma.submission.count({ where: { campaign: { shopId: shop.id }, status: "PENDING" } }),
-      prisma.reward.count({ where: { customer: { shopId: shop.id }, status: "APPLIED" } }),
-      prisma.submission.aggregate({
-        where: { campaign: { shopId: shop.id } },
-        _sum: { fileBytes: true },
-      }),
-    ]);
-
-  const rawRecentSubmissions = await prisma.submission.findMany({
-    where: { campaign: { shopId: shop.id } },
-    include: {
-      customer: { select: { email: true } },
-      campaign: { select: { title: true } },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 5,
-  });
-
-  // Resolve R2 URLs to presigned download URLs for thumbnails
-  const recentSubmissions = await Promise.all(
-    rawRecentSubmissions.map(async (s) => {
-      let resolvedUrl = s.contentUrl;
-      const r2Key = extractKeyFromContentUrl(s.contentUrl);
-      if (r2Key && r2Key !== "pending") {
-        try {
-          resolvedUrl = await getPresignedDownloadUrl(r2Key);
-        } catch {
-          resolvedUrl = s.contentUrl;
-        }
-      }
-      return { ...s, contentUrl: resolvedUrl };
-    }),
-  );
-
-  const campaigns = await prisma.campaign.findMany({
-    where: { shopId: shop.id, status: "ACTIVE" },
+  const walls = await prisma.campaign.findMany({
+    where: { shopId: shop.id, rewardType: { not: "SUBSCRIPTION_DISCOUNT" }, status: { not: "CLOSED" } },
     select: {
       id: true,
       title: true,
-      rewardCycles: true, rewardFrequency: true,
-      productTitle: true,
-      productImageUrl: true,
-      contentType: true,
+      status: true,
+      productScope: true,
+      products: true,
+      rewardType: true,
+      discountType: true,
+      discountValue: true,
+      rewardCycles: true,
+      rewardFrequency: true,
+      discountCodeType: true,
+      discountCodeAmount: true,
+      storeCreditAmount: true,
       _count: { select: { submissions: true } },
     },
-    orderBy: { createdAt: "desc" },
-    take: 3,
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
   });
+  // New merchants land on the "create your first wall" screen
+  if (!walls.length) return redirect("/app/walls");
 
-  // Monthly submission count for the current billing period
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthlySubmissions = await prisma.submission.count({
-    where: {
-      campaign: { shopId: shop.id },
-      createdAt: { gte: monthStart },
-    },
-  });
+  const inShop = { campaign: { shopId: shop.id } };
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const [onWall, pendingCount, rewardsSent, storageAgg, monthlySubmissions, pendingRaw] = await Promise.all([
+    prisma.submission.count({ where: { ...inShop, status: "APPROVED" } }),
+    prisma.submission.count({ where: { ...inShop, status: "PENDING" } }),
+    prisma.reward.count({ where: { customer: { shopId: shop.id }, status: "APPLIED", rewardType: { in: ["DISCOUNT_CODE", "STORE_CREDIT"] } } }),
+    prisma.submission.aggregate({ where: inShop, _sum: { fileBytes: true } }),
+    prisma.submission.count({ where: { ...inShop, createdAt: { gte: monthStart } } }),
+    prisma.submission.findMany({
+      where: { ...inShop, status: "PENDING" },
+      include: { customer: { select: { email: true } }, campaign: { select: { title: true } } },
+      orderBy: { createdAt: "asc" }, // oldest first — that's the review queue order
+      take: 6,
+    }),
+  ]);
+
+  const pending = await Promise.all(
+    pendingRaw.map(async (s) => {
+      let url = s.thumbnailUrl || s.contentUrl;
+      const key = extractKeyFromContentUrl(url);
+      if (key && key !== "pending") url = await getPresignedDownloadUrl(key).catch(() => url);
+      return {
+        id: s.id,
+        email: s.customer.email,
+        wall: s.campaign.title,
+        products: parseProducts(s.products).map((p) => p.title).join(", "),
+        contentType: s.thumbnailUrl ? "PHOTO" : s.contentType,
+        contentUrl: url,
+        durationSecs: s.durationSecs,
+        createdAt: s.createdAt,
+      };
+    }),
+  );
 
   const plan = getPlan((shop.planTier as PlanTierKey) || "FREE");
-
   return json({
-    stats: { activeCampaigns, totalSubmissions, pendingReview, rewardsApplied },
-    recentSubmissions,
-    activeCampaigns: campaigns,
-    shopExists: true,
-    providerConnected: shop.providerConnected,
-    storage: {
-      usedBytes: storageAgg._sum.fileBytes || 0,
-      plan,
-    },
-    submissions: {
-      monthlyCount: monthlySubmissions,
-      plan,
-    },
+    stats: { liveWalls: walls.filter((w) => w.status === "ACTIVE").length, onWall, pendingCount, rewardsSent },
+    storage: { usedBytes: storageAgg._sum.fileBytes || 0, plan },
+    submissions: { monthlyCount: monthlySubmissions, plan },
+    pending,
+    walls: walls.map((w) => {
+      const products = parseProducts(w.products);
+      return {
+        id: w.id,
+        title: w.title,
+        status: w.status,
+        image: products[0]?.imageUrl ?? null,
+        detail: `${w.productScope === "ALL" ? "All products" : products.length === 1 ? products[0].title : `${products.length} products`} · ${campaignRewardLabel(w)}`,
+        submissions: w._count.submissions,
+      };
+    }),
   });
 };
 
-function StatCard({ title, value, helpText }: { title: string; value: number; helpText?: string }) {
+function timeAgo(d: string) {
+  const mins = Math.max(1, Math.round((Date.now() - new Date(d).getTime()) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+function StatCard({ title, value, helpText, url }: { title: string; value: number; helpText?: string; url?: string }) {
   return (
     <Card>
       <BlockStack gap="100">
         <Text as="p" variant="bodyMd" tone="subdued">{title}</Text>
         <Text as="p" variant="headingXl">{value}</Text>
-        {helpText && <Text as="p" variant="bodySm" tone="subdued">{helpText}</Text>}
+        {helpText && (url ? <Button variant="plain" url={url}>{helpText}</Button> : <Text as="p" variant="bodySm" tone="subdued">{helpText}</Text>)}
       </BlockStack>
     </Card>
   );
 }
 
-function StorageCard({ usedBytes, plan }: { usedBytes: number; plan: { storageBytes: number; storageLabel: string; name: string } }) {
-  const pct = plan.storageBytes === Infinity ? 0 : Math.min((usedBytes / plan.storageBytes) * 100, 100);
+function UsageCard({ title, used, limit, usedLabel, limitLabel, planName, nearFull, full }: {
+  title: string; used: number; limit: number; usedLabel: string; limitLabel: string; planName: string; nearFull: string; full: string;
+}) {
+  const pct = limit === Infinity || !limit ? 0 : Math.min((used / limit) * 100, 100);
   const isHigh = pct >= 80;
   const isCritical = pct >= 95;
-
   return (
     <Card>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
-          <Text as="h2" variant="headingMd">Storage</Text>
-          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${plan.name} plan`}</Badge>
+          <Text as="h2" variant="headingMd">{title}</Text>
+          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${planName} plan`}</Badge>
         </InlineStack>
-
-        <ProgressBar
-          progress={pct}
-          tone={isCritical ? "critical" : isHigh ? "highlight" : "primary"}
-          size="small"
-        />
-
+        <ProgressBar progress={pct} tone={isCritical ? "critical" : isHigh ? "highlight" : "primary"} size="small" />
         <InlineStack align="space-between">
-          <Text as="p" variant="bodySm" tone="subdued">
-            {formatBytes(usedBytes)} used
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {plan.storageLabel} limit
-          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">{usedLabel}</Text>
+          <Text as="p" variant="bodySm" tone="subdued">{limitLabel}</Text>
         </InlineStack>
-
         {isHigh && (
-          <Banner tone={isCritical ? "critical" : "warning"}>
-            {isCritical
-              ? "You're almost out of storage. Upgrade your plan to keep accepting submissions."
-              : "Storage is getting full. Consider upgrading to avoid disruptions."}
+          <Banner tone={isCritical ? "critical" : "warning"} action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
+            {isCritical ? full : nearFull}
           </Banner>
         )}
       </BlockStack>
@@ -185,229 +161,141 @@ function StorageCard({ usedBytes, plan }: { usedBytes: number; plan: { storageBy
   );
 }
 
-function SubmissionsCard({ monthlyCount, plan }: { monthlyCount: number; plan: { submissionsPerMonth: number; submissionLabel: string; name: string } }) {
-  const pct = plan.submissionsPerMonth === Infinity ? 0 : Math.min((monthlyCount / plan.submissionsPerMonth) * 100, 100);
-  const isHigh = pct >= 80;
-  const isCritical = pct >= 95;
-
-  return (
-    <Card>
-      <BlockStack gap="300">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="h2" variant="headingMd">Monthly Submissions</Text>
-          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${plan.name} plan`}</Badge>
-        </InlineStack>
-
-        <ProgressBar
-          progress={pct}
-          tone={isCritical ? "critical" : isHigh ? "highlight" : "primary"}
-          size="small"
-        />
-
-        <InlineStack align="space-between">
-          <Text as="p" variant="bodySm" tone="subdued">
-            {monthlyCount} used this month
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {plan.submissionLabel} limit
-          </Text>
-        </InlineStack>
-
-        {isHigh && (
-          <Banner tone={isCritical ? "critical" : "warning"}>
-            {isCritical
-              ? "You\u2019re almost at your monthly submission limit. Upgrade to keep accepting submissions."
-              : "Submission usage is getting high. Consider upgrading to avoid disruptions."}
-          </Banner>
-        )}
-      </BlockStack>
-    </Card>
-  );
-}
-
-function statusBadge(status: string) {
-  switch (status) {
-    case "PENDING":  return <Badge tone="attention">Pending</Badge>;
-    case "APPROVED": return <Badge tone="success">Approved</Badge>;
-    case "REJECTED": return <Badge tone="critical">Rejected</Badge>;
-    case "FLAGGED":  return <Badge tone="warning">Flagged</Badge>;
-    default:         return <Badge>{status}</Badge>;
-  }
-}
+const STATUS: Record<string, { tone?: "success" | "attention" | "info"; label: string }> = {
+  ACTIVE: { tone: "success", label: "Active" },
+  PAUSED: { tone: "attention", label: "Paused" },
+  DRAFT: { tone: "info", label: "Draft" },
+};
 
 export default function Dashboard() {
-  const { stats, recentSubmissions, activeCampaigns, shopExists, providerConnected, storage, submissions } =
-    useLoaderData<typeof loader>();
+  const { stats, storage, submissions, pending, walls } = useLoaderData<typeof loader>();
 
   return (
-    <Page>
-      <TitleBar title="UGME Dashboard" />
+    <Page title="Dashboard" primaryAction={{ content: "Create wall campaign", url: "/app/walls/new" }}>
       <BlockStack gap="500">
-        {!providerConnected && (
-          <Banner
-            title="Connect your subscription provider"
-            tone="warning"
-            action={{ content: "Go to Settings", url: "/app/settings" }}
-          >
-            <p>
-              UGME needs access to your subscription platform to apply discount
-              rewards. Connect your provider in Settings to start creating campaigns.
-            </p>
-          </Banner>
-        )}
-        {/* Stats Row */}
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-          <StatCard title="Active Campaigns" value={stats.activeCampaigns} />
-          <StatCard title="Total Submissions" value={stats.totalSubmissions} />
-          <StatCard title="Pending Review" value={stats.pendingReview} />
-          <StatCard title="Rewards Applied" value={stats.rewardsApplied} />
+          <StatCard title="Live walls" value={stats.liveWalls} />
+          <StatCard title="Waiting for review" value={stats.pendingCount} helpText={stats.pendingCount ? "Review now" : "All caught up"} url={stats.pendingCount ? "/app/library" : undefined} />
+          <StatCard title="On your walls" value={stats.onWall} helpText="Approved submissions" />
+          <StatCard title="Rewards sent" value={stats.rewardsSent} helpText="Discount codes + store credit" />
         </InlineGrid>
 
-        {/* Storage & submissions bars */}
         <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
-          <StorageCard usedBytes={storage.usedBytes} plan={storage.plan} />
-          {submissions && <SubmissionsCard monthlyCount={submissions.monthlyCount} plan={submissions.plan} />}
+          <UsageCard
+            title="Storage"
+            used={storage.usedBytes}
+            limit={storage.plan.storageBytes}
+            usedLabel={`${formatBytes(storage.usedBytes)} used`}
+            limitLabel={`${storage.plan.storageLabel} limit`}
+            planName={storage.plan.name}
+            nearFull="Storage is getting full. Upgrade to keep accepting submissions."
+            full="You're almost out of storage. Upgrade your plan to keep accepting submissions."
+          />
+          <UsageCard
+            title="Submissions this month"
+            used={submissions.monthlyCount}
+            limit={submissions.plan.submissionsPerMonth}
+            usedLabel={`${submissions.monthlyCount} this month`}
+            limitLabel={`${submissions.plan.submissionLabel} limit`}
+            planName={submissions.plan.name}
+            nearFull="You're getting close to this month's submission limit."
+            full="You're almost at this month's submission limit. Upgrade to keep accepting submissions."
+          />
         </InlineGrid>
 
         <Layout>
-          {/* Recent Submissions */}
           <Layout.Section>
             <Card>
               <BlockStack gap="400">
-                <InlineStack align="space-between">
-                  <Text as="h2" variant="headingMd">Recent Submissions</Text>
-                  <Button size="slim" url="/app/library">View all</Button>
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h2" variant="headingMd">Waiting for review</Text>
+                    {stats.pendingCount > 0 && <Badge tone="attention">{String(stats.pendingCount)}</Badge>}
+                  </InlineStack>
+                  <Button size="slim" url="/app/library">Open submissions</Button>
                 </InlineStack>
-                {recentSubmissions.length === 0 ? (
-                  <Text as="p" tone="subdued">
-                    No submissions yet. Create a campaign to start collecting content.
-                  </Text>
+                {pending.length === 0 ? (
+                  <Text as="p" tone="subdued">Nothing to review. New submissions from verified buyers will show up here.</Text>
                 ) : (
                   <ResourceList
-                    items={recentSubmissions}
-                    renderItem={(submission: any) => (
+                    items={pending}
+                    renderItem={(s) => (
                       <ResourceItem
-                        id={submission.id}
-                        url={`/app/library/${submission.id}`}
-                        media={
-                          <SubmissionThumbnail
-                            contentType={submission.contentType}
-                            contentUrl={submission.contentUrl}
-                            durationSecs={submission.durationSecs}
-                            size={40}
-                          />
-                        }
+                        id={s.id}
+                        url={`/app/library/${s.id}`}
+                        media={<SubmissionThumbnail contentType={s.contentType} contentUrl={s.contentUrl} durationSecs={s.durationSecs} size={40} />}
+                        accessibilityLabel={`Review submission from ${s.email}`}
                       >
-                        <InlineStack align="space-between" blockAlign="center">
+                        <InlineStack align="space-between" blockAlign="center" wrap={false} gap="300">
                           <BlockStack gap="100">
-                            <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {submission.customer.email}
-                            </Text>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">{s.email}</Text>
                             <Text as="p" variant="bodySm" tone="subdued">
-                              {submission.campaign.title}
+                              {s.products ? `Bought ${s.products} · ` : ""}{s.wall}
                             </Text>
                           </BlockStack>
-                          <InlineStack gap="300" blockAlign="center">
-                            <Badge>{submission.contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
-                            {statusBadge(submission.status)}
+                          <InlineStack gap="300" blockAlign="center" wrap={false}>
+                            <Text as="span" variant="bodySm" tone="subdued">{timeAgo(s.createdAt)}</Text>
+                            <Button size="slim" url={`/app/library/${s.id}`}>Review</Button>
                           </InlineStack>
                         </InlineStack>
                       </ResourceItem>
                     )}
                   />
                 )}
+                {stats.pendingCount > pending.length && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    + {stats.pendingCount - pending.length} more in Submissions
+                  </Text>
+                )}
               </BlockStack>
             </Card>
           </Layout.Section>
 
-          {/* Active Campaigns Sidebar */}
           <Layout.Section variant="oneThird">
             <Card>
-              <BlockStack gap="400">
+              <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">Active Campaigns</Text>
-                  <Button size="slim" url="/app/campaigns">View all</Button>
+                  <Text as="h2" variant="headingMd">Wall campaigns</Text>
+                  <Button size="slim" variant="plain" url="/app/walls">View all</Button>
                 </InlineStack>
-                {activeCampaigns.length === 0 ? (
-                  <Text as="p" tone="subdued">No active campaigns.</Text>
-                ) : (
-                  <BlockStack gap="200">
-                    {activeCampaigns.map((campaign: any) => (
-                      <a
-                        key={campaign.id}
-                        href={`/app/campaigns/${campaign.id}`}
-                        className="campaign-sidebar-card"
-                        style={{
-                          textDecoration: "none",
-                          color: "inherit",
-                          display: "flex",
-                          gap: "12px",
-                          alignItems: "center",
-                          padding: "8px",
-                          borderRadius: "10px",
-                          transition: "background 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "var(--p-color-bg-surface-hover)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                      >
-                        <div style={{
-                          width: "56px",
-                          height: "56px",
-                          minWidth: "56px",
-                          borderRadius: "10px",
-                          overflow: "hidden",
-                          background: "#f3f3f3",
-                          position: "relative",
-                        }}>
-                          {campaign.productImageUrl ? (
-                            <img
-                              src={campaign.productImageUrl}
-                              alt={campaign.productTitle || campaign.title}
-                              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                            />
-                          ) : (
-                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #f0f0f0, #e0e0e0)", fontSize: "11px", color: "#999" }}>
-                              No img
+                {/* ~3 rows visible; the rest scroll inside the card */}
+                <div style={{ maxHeight: 3 * ROW_H + 2 * ROW_GAP, overflowY: "auto", margin: "0 -4px", padding: "0 4px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: ROW_GAP }}>
+                    {walls.map((w) => {
+                      const st = STATUS[w.status] ?? { label: w.status };
+                      return (
+                        <a
+                          key={w.id}
+                          href={`/app/walls/${w.id}`}
+                          style={{ display: "flex", alignItems: "center", gap: 12, height: ROW_H, padding: "0 8px", borderRadius: 10, textDecoration: "none", color: "inherit" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--p-color-bg-surface-hover)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                        >
+                          <div style={{ width: 48, height: 48, flex: "0 0 48px", borderRadius: 8, overflow: "hidden", background: "var(--p-color-bg-surface-secondary)", border: "1px solid var(--p-color-border-secondary)" }}>
+                            <img src={w.image || PLACEHOLDER_IMG} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                              <div style={{ minWidth: 0, flex: "0 1 auto" }}>
+                                <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>{w.title}</Text>
+                              </div>
+                              <div style={{ flex: "0 0 auto" }}>
+                                <Badge tone={st.tone}>{st.label}</Badge>
+                              </div>
                             </div>
-                          )}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
-                            <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>{campaign.title}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued" truncate>{w.detail}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued" truncate>{w.submissions} submission{w.submissions === 1 ? "" : "s"}</Text>
                           </div>
-                          {campaign.productTitle && (
-                            <Text as="p" variant="bodySm" tone="subdued" truncate>{campaign.productTitle}</Text>
-                          )}
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
-                            <Badge>{campaign.contentType === "VIDEO" ? "Video" : "Photo"}</Badge>
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {`${campaign._count.submissions} sub${campaign._count.submissions !== 1 ? "s" : ""} · ${campaign.rewardCycles}${campaign.rewardFrequency === "DAY" ? "d" : campaign.rewardFrequency === "WEEK" ? "wk" : "mo"}`}
-                            </Text>
-                          </div>
-                        </div>
-                      </a>
-                    ))}
-                  </BlockStack>
-                )}
-                <Box paddingBlockStart="200">
-                  <Button variant="primary" url="/app/campaigns/new">Create campaign</Button>
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+                <Box paddingBlockStart="100">
+                  <Button variant="primary" url="/app/walls/new">Create wall campaign</Button>
                 </Box>
               </BlockStack>
             </Card>
-
-            {!shopExists && (
-              <Box paddingBlockStart="400">
-                <Card>
-                  <BlockStack gap="200">
-                    <Text as="h2" variant="headingMd">Get Started</Text>
-                    <Text as="p" variant="bodyMd">
-                      Configure your subscription provider and brand settings to start collecting content.
-                    </Text>
-                    <Button variant="primary" url="/app/settings">Go to Settings</Button>
-                  </BlockStack>
-                </Card>
-              </Box>
-            )}
           </Layout.Section>
         </Layout>
       </BlockStack>

@@ -11,6 +11,8 @@ export type BillingFrequency = "DAY" | "WEEK" | "MONTH";
 export type ValueType = "PERCENTAGE" | "FIXED_AMOUNT";
 
 export type RewardDetails =
+  /** No reward — the customer is featured on the brand's wall */
+  | { kind: "FEATURED" }
   /** One-time: single-use Shopify discount code for the next order */
   | {
       kind: "DISCOUNT_CODE";
@@ -40,13 +42,18 @@ export type RewardKind = RewardDetails["kind"];
 
 export interface PresenterContext {
   shopUrl: string; // https://store.myshopify.com
-  accountUrl: string; // UGME account page
+  brandName?: string;
+  accountUrl: string; // customer "My posts" page
   customerEmail: string;
   productTitle?: string | null;
   currency?: string; // ISO 4217, default USD
 }
 
 export interface RewardPresentation {
+  /** Small caps label above the headline (default "Your reward") */
+  cardLabel?: string;
+  /** Heading of the steps list (default "How to use it") */
+  stepsTitle?: string;
   /** Big line in the reward card, e.g. "$10 off" */
   headline: string;
   /** Line under it, e.g. "5 months of your subscription" */
@@ -164,7 +171,27 @@ const storeCredit: Presenter<"STORE_CREDIT"> = (r, ctx) => {
   };
 };
 
+const featured: Presenter<"FEATURED"> = (_r, ctx) => {
+  const brand = ctx.brandName || "the store";
+  return {
+    cardLabel: "You're on the wall",
+    stepsTitle: "What happens next",
+    headline: "Featured",
+    sub: `on ${brand}'s Social Wall`,
+    subjectTail: `you're featured on ${brand}'s Social Wall`,
+    facts: ["Shown with a Verified buyer badge"],
+    howToHtml: [
+      `Your post now appears on the Social Wall in ${esc(brand)}'s store.`,
+      `Shoppers can watch it and see the product you bought.`,
+      `Share the store with friends so they can find you on the wall.`,
+    ],
+    cta: { label: "See the wall", url: ctx.shopUrl },
+    text: `You're featured on ${brand}'s Social Wall. Shoppers can now see your post (with a Verified buyer badge) in the store: ${ctx.shopUrl}`,
+  };
+};
+
 const PRESENTERS: { [K in RewardKind]: Presenter<K> } = {
+  FEATURED: featured,
   DISCOUNT_CODE: discountCode,
   SUBSCRIPTION_DISCOUNT: subscriptionDiscount,
   STORE_CREDIT: storeCredit,
@@ -186,10 +213,14 @@ export interface CampaignRewardFields {
   // discount code
   discountCodeType?: string | null;
   discountCodeAmount?: number | null;
+  // store credit
+  storeCreditAmount?: number | null;
 }
 
 /** e.g. "25% off discount code", "$10 off × 3 months", "1 month free" */
 export function campaignRewardLabel(c: CampaignRewardFields, currency = "USD"): string {
+  if (c.rewardType === "NONE") return "Featured on the wall (no reward)";
+  if (c.rewardType === "STORE_CREDIT") return `${money(Number(c.storeCreditAmount || 0), currency)} store credit`;
   if (c.rewardType === "DISCOUNT_CODE") {
     const amt = Number(c.discountCodeAmount || 0);
     const v = c.discountCodeType === "FIXED_AMOUNT" ? `${money(amt, currency)} off` : `${amt}% off`;

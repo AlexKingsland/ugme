@@ -9,22 +9,18 @@ export default [
   ...prefix("app", [
     layout("routes/merchant/app.tsx", [
       index("routes/merchant/app._index.tsx"),
-      route("campaigns", "routes/merchant/app.campaigns.tsx"),
-      route("campaigns/new", "routes/merchant/app.campaigns.new.tsx"),
-      route("campaigns/:id", "routes/merchant/app.campaigns.$id.tsx"),
-      route("campaigns/:id/edit", "routes/merchant/app.campaigns.$id.edit.tsx"),
-      route("campaigns/:id/live", "routes/merchant/app.campaigns.$id.live.tsx"),
+      route("walls", "routes/merchant/app.walls.tsx"),
+      route("walls/:id", "routes/merchant/app.walls.$id.tsx"),
+      // old links → wall campaigns
+      route("campaigns/*", "routes/merchant/app.campaigns-redirect.tsx"),
       route("library/:id", "routes/merchant/app.library.$id.tsx"),
       route("library", "routes/merchant/app.library.tsx"),
-      route("social-wall", "routes/merchant/app.social-wall.tsx"),
       route("settings", "routes/merchant/app.settings.tsx"),
       route("settings/billing", "routes/merchant/app.settings.billing.tsx"),
-      route("api/test-connection", "routes/merchant/app.api.test-connection.tsx"),
-      route("api/check-selling-plans", "routes/merchant/app.api.check-selling-plans.tsx"),
     ]),
   ]),
 
-  // Customer-facing submission flow is served via the Shopify App Proxy
-  // at /apps/ugme/* — handled by routes/api.proxy.$.tsx (auto-discovered
+  // Customer-facing share flow is served via the Shopify App Proxy
+  // at /apps/social-wall/* — handled by routes/api.proxy.$.tsx (auto-discovered
   // by flatRoutes above). No separate customer routes needed.
 ] satisfies RouteConfig;
