@@ -3,6 +3,8 @@ import type * as THREE from "three";
 /** One piece of approved UGME content, as returned by /apps/ugme/canvas */
 export type MediaItem = {
   id: string;
+  /** Wall campaign the post belongs to (sales attribution) */
+  wall?: string;
   type: "image" | "video";
   /** Full image URL (photos) or playable video URL (videos) */
   src: string;

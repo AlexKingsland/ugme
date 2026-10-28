@@ -7,10 +7,20 @@ application_url = "https://social-wall.cloverkitstudio.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions"
+scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions,write_pixels,read_customer_events"
 
 [webhooks]
 api_version = "2026-10"
+
+  # Sales attribution — every order (for % of revenue) + lines the wall drove.
+  # Needs protected customer data access (Dev Dashboard → API access).
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders/create"
+
+  [[webhooks.subscriptions]]
+  topics = [ "refunds/create" ]
+  uri = "/webhooks/refunds/create"
 
 [auth]
 redirect_urls = [ "https://social-wall.cloverkitstudio.com/api/auth" ]
@@ -47,4 +57,8 @@ required = true
 
 [metaobjects.app.ugme_campaign.fields.status]
 name = "Status"
+type = "single_line_text_field"
+
+[metaobjects.app.ugme_campaign.fields.data_url]
+name = "Data URL"
 type = "single_line_text_field"

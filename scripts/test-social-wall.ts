@@ -441,6 +441,40 @@ section("Wall data");
   check("pending posts never appear", pending === 0 || true);
 }
 
+section("CDN publishing (public/ copies in the real dev bucket)");
+{
+  const pm = await import("../app/utils/public-media.server");
+  const { headObject, extractKeyFromContentUrl: keyOf } = await import("../app/utils/r2.server");
+  const before = process.env.MEDIA_PUBLIC_BASE_URL;
+  delete process.env.MEDIA_PUBLIC_BASE_URL;
+  check("without MEDIA_PUBLIC_BASE_URL nothing is published (app works as before)", pm.publicMediaBase() === null && pm.publicUrlForKey("a/b.mp4") === null);
+  process.env.MEDIA_PUBLIC_BASE_URL = "https://media.example.test";
+  // a real uploaded, approved submission from earlier in this run
+  const sub = await prisma.submission.findFirst({ where: { campaignId: wallNone.id, contentUrl: { startsWith: "r2://" }, status: "APPROVED" } });
+  const key = sub ? keyOf(sub.contentUrl)! : "";
+  await pm.onSubmissionApproved(sub!.id);
+  const pubHead = await headObject(pm.publicKeyFor(key)).catch(() => null);
+  check("approval copies the media into public/", !!pubHead && pubHead.size > 0, pubHead);
+  const wallJson = await headObject(pm.wallJsonKey(wallNone.id)).catch(() => null);
+  check("…and writes the wall's list to public/walls/<id>.json", !!wallJson && wallJson.size > 0);
+  const payload = JSON.parse((await get(`canvas`, undefined, { wall: wallNone.id })).text);
+  const item = payload.items.find((i: any) => i.id === sub!.id);
+  check("wall media URLs point at the CDN, not signed R2 links", !!item && item.src.startsWith("https://media.example.test/public/") && !/X-Amz-/.test(item.src), item?.src);
+  await pm.onSubmissionRemoved({ contentUrl: sub!.contentUrl, thumbnailUrl: sub!.thumbnailUrl, campaignId: wallNone.id });
+  const gone = await headObject(pm.publicKeyFor(key)).catch(() => null);
+  check("rejecting/deleting removes the public copy", !gone, gone);
+  const pending = await prisma.submission.findFirst({ where: { status: "PENDING", contentUrl: { startsWith: "r2://" } } });
+  if (pending) {
+    const pk = keyOf(pending.contentUrl)!;
+    check("pending media is never in public/", !(await headObject(pm.publicKeyFor(pk)).catch(() => null)));
+  }
+  // clean up the test wall lists
+  const { deleteObject: del } = await import("../app/utils/r2.server");
+  for (const id of [wallNone.id, wallCredit.id, wallCode.id]) await del(pm.wallJsonKey(id)).catch(() => {});
+  if (before === undefined) delete process.env.MEDIA_PUBLIC_BASE_URL;
+  else process.env.MEDIA_PUBLIC_BASE_URL = before;
+}
+
 // ── cleanup: R2 test uploads ────────────────────────────────────
 const { deleteObject, extractKeyFromContentUrl, posterKeyFor } = await import("../app/utils/r2.server");
 for (const s of await prisma.submission.findMany({ where: { campaignId: { in: [wallCredit.id, wallNone.id] } } })) {

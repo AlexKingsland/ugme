@@ -15,6 +15,7 @@ export default [
       route("campaigns/*", "routes/merchant/app.campaigns-redirect.tsx"),
       route("library/:id", "routes/merchant/app.library.$id.tsx"),
       route("library", "routes/merchant/app.library.tsx"),
+      route("analytics", "routes/merchant/app.analytics.tsx"),
       route("settings", "routes/merchant/app.settings.tsx"),
       route("api/products-live", "routes/merchant/app.api.products-live.tsx"),
       route("settings/billing", "routes/merchant/app.settings.billing.tsx"),

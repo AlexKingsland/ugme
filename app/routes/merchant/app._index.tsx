@@ -26,13 +26,14 @@ import { getPlan, type PlanTierKey } from "../../utils/plans.server";
 import { formatBytes } from "../../utils/format";
 import { parseProducts } from "../../utils/wall-campaigns";
 import { campaignRewardLabel } from "../../utils/rewards/presenters";
+import { getSalesSummary, shopTimeZone } from "../../utils/attribution.server";
 
 const ROW_H = 72;
 const ROW_GAP = 4;
 const PLACEHOLDER_IMG = "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-product-1_small.png";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return redirect("/app/walls");
 
@@ -75,6 +76,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
   ]);
 
+  const sales = await shopTimeZone(admin.graphql, session.shop)
+    .then((tz) => getSalesSummary(shop.id, 30, tz))
+    .catch(() => null);
+
   const pending = await Promise.all(
     pendingRaw.map(async (s) => {
       let url = s.thumbnailUrl || s.contentUrl;
@@ -99,6 +104,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     storage: { usedBytes: storageAgg._sum.fileBytes || 0, plan },
     submissions: { monthlyCount: monthlySubmissions, plan },
     pending,
+    sales: sales && {
+      currency: sales.currency,
+      wallCents: sales.directCents + sales.influencedCents,
+      directCents: sales.directCents,
+      influencedCents: sales.influencedCents,
+      totalCents: sales.totalCents,
+      tracking: sales.trackingSince !== null,
+    },
     walls: walls.map((w) => {
       const products = parseProducts(w.products);
       return {
@@ -159,6 +172,45 @@ function UsageCard({ title, used, limit, usedLabel, limitLabel, planName }: {
   );
 }
 
+function SalesCard({ sales }: { sales: { currency: string; wallCents: number; directCents: number; influencedCents: number; totalCents: number; tracking: boolean } }) {
+  const fmt = (c: number) => {
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency: sales.currency }).format(c / 100); } catch { return `$${(c / 100).toFixed(2)}`; }
+  };
+  const share = sales.totalCents ? (sales.wallCents / sales.totalCents) * 100 : 0;
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingMd">Sales from your walls · last 30 days</Text>
+          <Button size="slim" url="/app/analytics">View analytics</Button>
+        </InlineStack>
+        {!sales.tracking ? (
+          <Text as="p" tone="subdued">Tracking starts with your next order — you'll see revenue from products shoppers add to cart from your walls, or buy after watching a post.</Text>
+        ) : (
+          <InlineGrid columns={{ xs: 2, md: 4 }} gap="400">
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Wall revenue</Text>
+              <Text as="p" variant="headingLg">{fmt(sales.wallCents)}</Text>
+            </BlockStack>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Direct</Text>
+              <Text as="p" variant="headingLg">{fmt(sales.directCents)}</Text>
+            </BlockStack>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Influenced</Text>
+              <Text as="p" variant="headingLg">{fmt(sales.influencedCents)}</Text>
+            </BlockStack>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Share of store revenue</Text>
+              <Text as="p" variant="headingLg">{sales.totalCents ? `${share >= 10 || share === 0 ? share.toFixed(0) : share.toFixed(1)}%` : "—"}</Text>
+            </BlockStack>
+          </InlineGrid>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 const STATUS: Record<string, { tone?: "success" | "attention" | "info"; label: string }> = {
   ACTIVE: { tone: "success", label: "Active" },
   PAUSED: { tone: "attention", label: "Paused" },
@@ -166,7 +218,7 @@ const STATUS: Record<string, { tone?: "success" | "attention" | "info"; label: s
 };
 
 export default function Dashboard() {
-  const { stats, storage, submissions, pending, walls } = useLoaderData<typeof loader>();
+  const { stats, storage, submissions, pending, walls, sales } = useLoaderData<typeof loader>();
 
   return (
     <Page title="Dashboard" primaryAction={{ content: "Create wall campaign", url: "/app/walls/new" }}>
@@ -200,6 +252,8 @@ export default function Dashboard() {
           <StatCard title="Rewards sent" value={stats.rewardsSent} helpText="Discount codes + store credit" />
         </InlineGrid>
 
+        {sales && <SalesCard sales={sales} />}
+
         <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
           <UsageCard
             title="Storage"
@@ -228,7 +282,7 @@ export default function Dashboard() {
                     <Text as="h2" variant="headingMd">Waiting for review</Text>
                     {stats.pendingCount > 0 && <Badge tone="attention">{String(stats.pendingCount)}</Badge>}
                   </InlineStack>
-                  <Button size="slim" url="/app/library">Open submissions</Button>
+                  <Button size="slim" url="/app/library">View submissions</Button>
                 </InlineStack>
                 {pending.length === 0 ? (
                   <Text as="p" tone="subdued">Nothing to review. New submissions from verified buyers will show up here.</Text>

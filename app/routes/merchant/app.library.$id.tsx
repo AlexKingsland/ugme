@@ -23,6 +23,7 @@ import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { approveSubmission } from "../../utils/approval.server";
 import { mediaUrlsFor } from "../../utils/submission-media.server";
+import { onSubmissionRemoved } from "../../utils/public-media.server";
 import { checkSubmissionLimit, type PlanTierKey } from "../../utils/plans.server";
 
 function timeAgo(date: string | Date): string {
@@ -192,6 +193,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       }
     }
 
+    await onSubmissionRemoved({ contentUrl: submission.contentUrl, thumbnailUrl: submission.thumbnailUrl, campaignId: submission.campaignId });
     return json({ success: true, action: "denied" });
   }
 

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { ProductCards } from "./products";
+import { recordView, VIEW_THRESHOLD_MS } from "./attribution";
 import type { SelectedMedia } from "./types";
 
 const CloseIcon = () => (
@@ -47,6 +48,12 @@ export function MediaOverlay({
       if (video.parentNode === host) host.removeChild(video);
     };
   }, [video]);
+
+  // Watched for a few seconds → its products count as "influenced" for 7 days
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => recordView(item), VIEW_THRESHOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [item]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -95,7 +102,7 @@ export function MediaOverlay({
           )}
           {item.author && <span className="ugme-overlay__author">{item.author}</span>}
         </div>
-        {showProducts && item.products && item.products.length > 0 && <ProductCards products={item.products} />}
+        {showProducts && item.products && item.products.length > 0 && <ProductCards products={item.products} item={item} />}
       </div>
     </div>,
     document.body,

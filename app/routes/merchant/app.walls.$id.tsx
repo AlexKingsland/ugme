@@ -30,6 +30,7 @@ import { parseProducts, wallRewardOffer, type WallProduct } from "../../utils/wa
 import { syncWallCampaignsNow } from "../../utils/canvas.server";
 import { addToThemeUrl } from "../../utils/wall-theme.server";
 import { PROXY_BASE } from "../../utils/proxy-path";
+import { refreshWall } from "../../utils/public-media.server";
 import { liveOnlineStoreProducts } from "../../utils/product-availability.server";
 import { validateWall, type WallForm } from "../../utils/wall-validate";
 
@@ -119,6 +120,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (intent === "pause" && existing) {
     await prisma.campaign.update({ where: { id: existing.id }, data: { status: "PAUSED" } });
     await syncWallCampaignsNow(admin.graphql, session.shop);
+    await refreshWall(existing.id);
     return json({ ok: true, message: "Paused — the wall is now hidden on your store." });
   }
 
@@ -184,6 +186,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     : await prisma.campaign.create({ data: { ...data, shopId: shop.id, status: activating ? "ACTIVE" : "DRAFT" } });
 
   const sync = await syncWallCampaignsNow(admin.graphql, session.shop);
+  await refreshWall(saved.id);
   if (sync.errors.length) console.warn("[walls] sync after save had errors", sync.errors);
 
   if (!existing) return redirect(`/app/walls/${saved.id}?created=1`);

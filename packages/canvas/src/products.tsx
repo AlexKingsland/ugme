@@ -1,5 +1,6 @@
 import * as React from "react";
-import type { ProductRef } from "./types";
+import type { MediaItem, ProductRef } from "./types";
+import { directProperties, recordView } from "./attribution";
 
 /** Storefront product JSON (/products/<handle>.js) — live price & stock. */
 type StoreProduct = {
@@ -49,7 +50,7 @@ function announceCartChange(cart: unknown) {
 
 type AddState = "idle" | "adding" | "added" | "error";
 
-function ProductCard({ product }: { product: ProductRef }) {
+function ProductCard({ product, item }: { product: ProductRef; item: MediaItem }) {
   const [live, setLive] = React.useState<StoreProduct | null | undefined>(undefined);
   const [state, setState] = React.useState<AddState>("idle");
 
@@ -74,9 +75,11 @@ function ProductCard({ product }: { product: ProductRef }) {
       const res = await fetch(`${routesRoot()}cart/add.js`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ items: [{ id: variant.id, quantity: 1 }] }),
+        // Hidden `_social_wall` property → the order line is credited to this post
+        body: JSON.stringify({ items: [{ id: variant.id, quantity: 1, properties: directProperties(item) }] }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      recordView(item); // adding to cart is engagement too
       const cart = await fetch(`${routesRoot()}cart.js`).then((r) => r.json()).catch(() => null);
       announceCartChange(cart);
       setState("added");
@@ -116,12 +119,12 @@ function ProductCard({ product }: { product: ProductRef }) {
   );
 }
 
-export function ProductCards({ products }: { products: ProductRef[] }) {
+export function ProductCards({ products, item }: { products: ProductRef[]; item: MediaItem }) {
   if (!products.length) return null;
   return (
     <div className="ugme-products" onClick={(e) => e.stopPropagation()}>
       {products.slice(0, 3).map((p) => (
-        <ProductCard key={p.id} product={p} />
+        <ProductCard key={p.id} product={p} item={item} />
       ))}
     </div>
   );

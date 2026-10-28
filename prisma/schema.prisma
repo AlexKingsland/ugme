@@ -121,6 +121,7 @@ model Shop {
   planActivatedAt      DateTime?
   brandName            String?
   logoUrl              String?
+  pixelActivatedAt     DateTime?            // checkout pixel turned on by the app once; if it's gone later, the merchant removed it
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
 
@@ -280,4 +281,105 @@ model EmailLog {
   customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId])
+}
+
+// ── Sales attribution ────────────────────────────────────────────
+// Every order is recorded (for "% of store revenue"); lines the wall drove are
+// recorded in WallOrderLine. Money is integer cents in the shop's currency,
+// excluding shipping and tax, after discounts.
+model WallOrder {
+  id             String          @id @default(cuid())
+  shopId         String
+  orderId        String          // numeric Shopify order id
+  orderName      String?
+  orderedAt      DateTime
+  day            String          @default("") // YYYY-MM-DD in the shop's time zone (rollup key)
+  currency       String
+  revenueCents   Int             // subtotal after discounts
+  refundedCents  Int             @default(0)
+  test           Boolean         @default(false)
+  counted        Boolean         @default(true) // included in the rollups (test orders aren't, in production)
+  linesJson      String          @default("[]") // every product line, for credit that arrives later (checkout pixel)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  lines          WallOrderLine[]
+
+  @@unique([shopId, orderId])
+  @@index([shopId, orderedAt])
+  @@index([orderedAt])
+}
+
+model WallOrderLine {
+  id             String          @id @default(cuid())
+  orderRefId     String
+  lineItemId     String
+  productId      String          // numeric Shopify product id
+  productTitle   String?
+  kind           AttributionKind
+  campaignId     String?         // wall campaign (kept even if the wall is deleted later)
+  submissionId   String?         // post that drove it
+  quantity       Int
+  revenueCents   Int
+  refundedCents  Int             @default(0)
+
+  order          WallOrder       @relation(fields: [orderRefId], references: [id], onDelete: Cascade)
+
+  @@unique([orderRefId, lineItemId])
+  @@index([campaignId])
+  @@index([submissionId])
+}
+
+// Dashboard rollups — the reports read these, never the orders (one row per shop per day)
+model WallDailyStat {
+  id               String   @id @default(cuid())
+  shopId           String
+  day              String   // YYYY-MM-DD, shop time zone
+  currency         String
+  totalCents       Int      @default(0) // store revenue, net of refunds
+  directCents      Int      @default(0)
+  influencedCents  Int      @default(0)
+  directOrders     Int      @default(0)
+  influencedOrders Int      @default(0)
+
+  @@unique([shopId, day])
+}
+
+// One row per post per day it earned anything (top posts / top walls)
+model WallPostDailyStat {
+  id               String   @id @default(cuid())
+  shopId           String
+  day              String
+  submissionId     String
+  campaignId       String?
+  directCents      Int      @default(0)
+  influencedCents  Int      @default(0)
+
+  @@unique([shopId, day, submissionId])
+  @@index([shopId, day])
+}
+
+// Views reported by the checkout web pixel ("Buy it now" skips the cart attribute)
+model WallPixelView {
+  id             String          @id @default(cuid())
+  shopId         String
+  orderId        String
+  seen           String          // "<productId>:<submissionId>:<unixSecs>,…"
+  createdAt      DateTime        @default(now())
+
+  @@unique([shopId, orderId])
+}
+
+model WallRefund {
+  id             String          @id @default(cuid())
+  shopId         String
+  refundId       String
+  createdAt      DateTime        @default(now())
+
+  @@unique([shopId, refundId])
+}
+
+enum AttributionKind {
+  DIRECT     // added to cart from the wall's product card
+  INFLUENCED // product of a post the shopper watched in the last 7 days
 }

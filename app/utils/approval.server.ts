@@ -3,6 +3,7 @@ import { checkSubmissionLimit, type PlanTierKey } from "./plans.server";
 import type { SubscriptionProvider } from "@prisma/client";
 import type { AdminGraphqlClient } from "./providers";
 import { fulfillReward } from "./rewards.server";
+import { onSubmissionApproved } from "./public-media.server";
 
 export interface ApprovalResult {
   rewardStatus: "CREATED" | "APPLIED" | "FAILED";
@@ -83,6 +84,9 @@ export async function approveSubmission(params: {
   });
 
   const outcome = await fulfillReward({ submissionId, shop, admin });
+
+  // Publish to the CDN + refresh the wall's post list (never blocks approval)
+  await onSubmissionApproved(submissionId);
 
   return {
     rewardStatus: outcome.status,

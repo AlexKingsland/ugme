@@ -5,6 +5,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   CreateMultipartUploadCommand,
+  CopyObjectCommand,
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
@@ -126,14 +127,16 @@ export function extractKeyFromContentUrl(contentUrl: string): string | null {
  */
 export async function uploadToR2(
   key: string,
-  body: Buffer | Uint8Array,
+  body: Buffer | Uint8Array | string,
   contentType: string,
+  cacheControl?: string,
 ): Promise<void> {
   const command = new PutObjectCommand({
     Bucket: R2_BUCKET_NAME,
     Key: key,
     Body: body,
     ContentType: contentType,
+    ...(cacheControl ? { CacheControl: cacheControl } : {}),
   });
 
   await r2Client.send(command);
@@ -218,4 +221,19 @@ export async function getCacheableDownloadUrl(key: string, maxAgeSecs = 6 * 60 *
     expiresIn: (2 * STABLE_WINDOW_MS) / 1000,
     signingDate: windowStart,
   });
+}
+
+
+/** Server-side copy inside the bucket (nothing passes through our server). */
+export async function copyObject(srcKey: string, dstKey: string, opts: { contentType?: string; cacheControl?: string } = {}) {
+  await r2Client.send(
+    new CopyObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: dstKey,
+      CopySource: `${R2_BUCKET_NAME}/${srcKey.split("/").map(encodeURIComponent).join("/")}`,
+      MetadataDirective: "REPLACE",
+      ...(opts.contentType ? { ContentType: opts.contentType } : {}),
+      ...(opts.cacheControl ? { CacheControl: opts.cacheControl } : {}),
+    }),
+  );
 }

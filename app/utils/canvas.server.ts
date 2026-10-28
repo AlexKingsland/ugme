@@ -15,6 +15,7 @@ import prisma from "../db.server";
 import { extractKeyFromContentUrl, getCacheableDownloadUrl } from "./r2.server";
 import { MAX_POST_PRODUCTS, parseProducts } from "./wall-campaigns.server";
 import { PROXY_BASE } from "./proxy-path";
+import { publicUrlForKey, wallJsonUrl } from "./public-media.server";
 
 export const CANVAS_METAOBJECT_TYPE = "$app:ugme_campaign";
 const MAX_ITEMS = 300;
@@ -23,6 +24,8 @@ export type CanvasProduct = { id: string; title: string; handle: string | null; 
 
 export type CanvasItem = {
   id: string;
+  /** Wall campaign id — lets the storefront tag add-to-cart lines for sales attribution */
+  wall: string;
   type: "image" | "video";
   src: string;
   thumb: string | null;
@@ -51,6 +54,11 @@ async function resolveUrl(url: string | null | undefined): Promise<string | null
   if (!url) return null;
   if (url === "r2://pending" || url.includes("placeholder.ugme.app")) return null;
   const key = extractKeyFromContentUrl(url);
+  // Public CDN copy (approved media only ever reaches this function)
+  if (key) {
+    const pub = publicUrlForKey(key);
+    if (pub) return pub;
+  }
   // Stable-per-window URLs → browsers/CDN cache thumbnails & videos across page views
   if (key) return getCacheableDownloadUrl(key);
   return url.startsWith("http") ? url : null;
@@ -75,6 +83,7 @@ export async function getCanvasMedia(
     },
     select: {
       id: true,
+      campaignId: true,
       contentType: true,
       contentUrl: true,
       thumbnailUrl: true,
@@ -93,6 +102,7 @@ export async function getCanvasMedia(
       const products = parseProducts(s.products).slice(0, MAX_POST_PRODUCTS);
       return {
         id: s.id,
+        wall: s.campaignId,
         type: s.contentType === "VIDEO" ? "video" : "image",
         src,
         thumb,
@@ -118,32 +128,37 @@ function productGid(v: string | null): string | null {
   return null;
 }
 
+/** Everything one wall shows: its status + approved posts. Also written to public/walls/<id>.json. */
+export async function buildWallPayload(shopId: string, wallId: string, opts: { productId?: string | null } = {}) {
+  let wall: CanvasWall | null = null;
+  const c = await prisma.campaign.findFirst({ where: { id: wallId, shopId }, select: { id: true, title: true, status: true, maxSubmissions: true } });
+  if (c) {
+    const used = c.maxSubmissions == null ? 0 : await prisma.submission.count({ where: { campaignId: c.id, status: { not: "REJECTED" } } });
+    wall = {
+      id: c.id,
+      title: c.title,
+      active: c.status === "ACTIVE",
+      shareUrl: `${PROXY_BASE}/campaign/${c.id}/submit`,
+      spotsLeft: c.maxSubmissions == null ? null : Math.max(0, c.maxSubmissions - used),
+    };
+  }
+  const items = wall?.active ? await getCanvasMedia(shopId, [wallId], opts) : [];
+  return { wall, items, generatedAt: new Date().toISOString() };
+}
+
 export async function canvasJsonResponse(shopId: string, url: URL): Promise<Response> {
   // New: one wall campaign per block (?wall=<id>). Legacy: ?campaigns=a,b
   const wallId = (url.searchParams.get("wall") || "").trim();
-  const campaigns = wallId ? [wallId] : (url.searchParams.get("campaigns") || "").split(",");
   const productId = productGid(url.searchParams.get("product"));
   try {
-    let wall: CanvasWall | null = null;
-    if (wallId) {
-      const c = await prisma.campaign.findFirst({ where: { id: wallId, shopId }, select: { id: true, title: true, status: true, maxSubmissions: true } });
-      if (c) {
-        const used = c.maxSubmissions == null ? 0 : await prisma.submission.count({ where: { campaignId: c.id, status: { not: "REJECTED" } } });
-        wall = {
-          id: c.id,
-          title: c.title,
-          active: c.status === "ACTIVE",
-          shareUrl: `${PROXY_BASE}/campaign/${c.id}/submit`,
-          spotsLeft: c.maxSubmissions == null ? null : Math.max(0, c.maxSubmissions - used),
-        };
-      }
-    }
-    const items = wallId && !wall?.active ? [] : await getCanvasMedia(shopId, campaigns, { productId });
-    return new Response(JSON.stringify({ wall, items }), {
+    const payload = wallId
+      ? await buildWallPayload(shopId, wallId, { productId })
+      : { wall: null, items: await getCanvasMedia(shopId, (url.searchParams.get("campaigns") || "").split(","), { productId }) };
+    return new Response(JSON.stringify(payload), {
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        // short cache: URLs are valid for 6h+, approvals show up within 5 min
-        "Cache-Control": "public, max-age=300",
+        // short cache: approvals show up within a minute
+        "Cache-Control": "public, max-age=60",
       },
     });
   } catch (err) {
@@ -195,6 +210,7 @@ export async function ensureWallMetaobjectDefinition(graphql: AdminGraphql): Pro
             { key: "title", name: "Title", type: "single_line_text_field", required: true },
             { key: "campaign_id", name: "Campaign ID", type: "single_line_text_field", required: true },
             { key: "status", name: "Status", type: "single_line_text_field" },
+            { key: "data_url", name: "Data URL", type: "single_line_text_field" },
           ],
         },
       },
@@ -240,6 +256,8 @@ export async function syncCampaignMetaobjects(graphql: AdminGraphql, shopDomain:
           { key: "title", value: c.title },
           { key: "campaign_id", value: c.id },
           { key: "status", value: c.status },
+          // Where the theme block loads this wall's posts from (CDN), when configured
+          ...(wallJsonUrl(c.id) ? [{ key: "data_url", value: wallJsonUrl(c.id)! }] : []),
         ],
       };
     });

@@ -24,6 +24,9 @@
     "r2:cors": "node --env-file=.env --import tsx scripts/r2-cors.ts",
     "posters:backfill": "node --env-file=.env --import tsx scripts/backfill-posters.ts",
     "rewards:retry": "node --env-file=.env --import tsx scripts/retry-rewards.ts",
+    "media:publish": "node --env-file=.env --import tsx scripts/publish-public-media.ts",
+    "sales:rebuild": "node --env-file=.env --import tsx scripts/rebuild-sales-stats.ts",
+    "test:sales": "node --env-file=.env --import tsx scripts/test-attribution.ts",
     "test:wall": "node --env-file=.env --import tsx scripts/test-social-wall.ts",
     "test:emails": "node --import tsx scripts/check-email-templates.ts",
     "test:providers": "node --env-file=.env --import tsx scripts/parity/provider-parity.ts --mode adapter --compare scripts/parity/provider-parity.snapshot.json"

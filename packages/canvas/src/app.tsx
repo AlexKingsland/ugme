@@ -1,6 +1,7 @@
 import * as React from "react";
 import { peekLoaded, preloadMedia, releaseMedia, retainMedia } from "./media-loader";
 import { MediaOverlay } from "./overlay";
+import { syncViewsToCart } from "./attribution";
 import { InfiniteScene, type SceneHandlers } from "./scene";
 import type { CanvasOptions, MediaItem, SelectedMedia } from "./types";
 import { isTouchDevice } from "./utils";
@@ -83,7 +84,10 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
       .then((data) => {
         if (!alive) return;
         setWallFull(data.wall?.spotsLeft === 0);
-        setState({ status: "ready", media: data.items ?? [] });
+        // Older cached lists don't carry each post's wall — fall back to this block's wall
+        const items = (data.items ?? []).map((i) => (i.wall || !options.wall ? i : { ...i, wall: options.wall }));
+        setState({ status: "ready", media: items });
+        if (!options.designMode) void syncViewsToCart();
       })
       .catch((err) => alive && setState({ status: "error", message: String(err?.message || err) }));
     return () => {

@@ -1,0 +1,22 @@
+type = "web_pixel_extension"
+name = "Social Wall sales tracking"
+runtime_context = "strict"
+uid = "36479e88-38ab-2fd7-62a2-51743b5f272a8302ac89"
+
+# Only used to measure which wall posts lead to purchases — analytics consent only.
+[customer_privacy]
+analytics = true
+marketing = false
+preferences = false
+sale_of_data = "disabled"
+
+[settings]
+type = "object"
+
+[settings.fields.proxyPath]
+name = "App proxy path"
+description = "Where the pixel reports watched posts (the app sets this)"
+type = "single_line_text_field"
+validations = [
+  { name = "min", value = "1" }
+]

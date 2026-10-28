@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import { approveSubmission } from "../../utils/approval.server";
 import { checkSubmissionLimit } from "../../utils/plans.server";
 import { mediaUrlsFor } from "../../utils/submission-media.server";
+import { onSubmissionRemoved } from "../../utils/public-media.server";
 import { SubmissionThumbnail } from "../../components/SubmissionThumbnail";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useActionData, Link } from "@remix-run/react";
@@ -218,6 +219,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const submissionId = formData.get("submissionId") as string;
     const reason = formData.get("reason") as string;
     // Rejected = permanently discarded, won't show anywhere
+    const target = await prisma.submission.findUnique({
+      where: { id: submissionId },
+      select: { contentUrl: true, thumbnailUrl: true, campaignId: true, campaign: { select: { shopId: true } } },
+    });
+    if (!target || target.campaign.shopId !== shop.id) return json({ error: "Not found" }, { status: 404 });
     await prisma.submission.update({
       where: { id: submissionId },
       data: {
@@ -227,6 +233,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         reviewNote: reason || "Does not meet the requirements",
       },
     });
+    // Free the storage (same as rejecting from the detail page)
+    const rejectedKey = extractKeyFromContentUrl(target.contentUrl);
+    if (rejectedKey && rejectedKey !== "pending") await deleteObject(rejectedKey).catch(() => {});
+    await onSubmissionRemoved(target);
     return json({ success: true });
   }
 
@@ -246,7 +256,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const submissionId = formData.get("submissionId") as string;
     const submission = await prisma.submission.findUnique({
       where: { id: submissionId },
-      select: { id: true, contentUrl: true, campaign: { select: { shopId: true } } },
+      select: { id: true, contentUrl: true, thumbnailUrl: true, campaignId: true, campaign: { select: { shopId: true } } },
     });
     if (!submission || submission.campaign.shopId !== shop.id) {
       return json({ error: "Not found" }, { status: 404 });
@@ -259,6 +269,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Delete associated rewards, then the submission
     await prisma.reward.deleteMany({ where: { submissionId } });
     await prisma.submission.delete({ where: { id: submissionId } });
+    await onSubmissionRemoved(submission);
     return json({ success: true });
   }
 

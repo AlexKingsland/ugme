@@ -25,6 +25,18 @@
     return bundlePromise;
   }
 
+  // "This product only" on product pages: the CDN list has every post of the wall
+  function filterByProduct(data, product) {
+    if (!product || !data || !data.items) return data;
+    var gid = product.indexOf("gid://") === 0 ? product : "gid://shopify/Product/" + product;
+    var items = [];
+    for (var i = 0; i < data.items.length; i++) {
+      var ps = data.items[i].products || [];
+      for (var j = 0; j < ps.length; j++) if (ps[j].id === gid) { items.push(data.items[i]); break; }
+    }
+    return { wall: data.wall, items: items };
+  }
+
   // Fetch the media list and warm the thumbnails *while* the 3D bundle downloads,
   // instead of one after the other. The bundle picks up root.__ugmeData.
   function prefetchData(root) {
@@ -38,8 +50,18 @@
     else if (campaigns) params.push("campaigns=" + encodeURIComponent(campaigns));
     if (product) params.push("product=" + encodeURIComponent(product));
     var url = endpoint + (params.length ? (endpoint.indexOf("?") < 0 ? "?" : "&") + params.join("&") : "");
-    root.__ugmeData = fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
-      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    var getJson = function (u) {
+      return fetch(u, { headers: { Accept: "application/json" }, credentials: u.charAt(0) === "/" ? "same-origin" : "omit" })
+        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
+    };
+    // Prefer the wall's cached list on the CDN; fall back to the app proxy.
+    var wallJson = root.getAttribute("data-wall-json") || "";
+    var source = wallJson
+      ? getJson(wallJson)
+          .then(function (data) { return filterByProduct(data, product); })
+          .catch(function () { return getJson(url); })
+      : getJson(url);
+    root.__ugmeData = source
       .then(function (data) {
         var items = (data && data.items) || [];
         for (var i = 0; i < items.length; i++) {

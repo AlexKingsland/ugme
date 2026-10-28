@@ -8,6 +8,7 @@ import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { maybeSyncCampaignMetaobjects } from "../../utils/canvas.server";
+import { maybeEnsurePixelOnce } from "../../utils/web-pixel.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -26,6 +27,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Keep wall campaigns pickable in the theme editor's Social Wall block (throttled, non-blocking)
   maybeSyncCampaignMetaobjects(admin.graphql, session.shop);
+  // Checkout pixel for sales attribution ("Buy it now" skips the cart) — set up once;
+  // if the merchant disconnects it later, it stays off (Analytics offers to turn it on)
+  maybeEnsurePixelOnce(admin.graphql, session.shop);
 
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
@@ -41,6 +45,7 @@ export default function App() {
         </Link>
         <Link to="/app/walls">Wall campaigns</Link>
         <Link to="/app/library">Submissions</Link>
+        <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />

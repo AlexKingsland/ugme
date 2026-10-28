@@ -1,4 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { recordPixelViews } from "../utils/attribution.server";
+import { parsePixelSeen } from "../utils/attribution";
 import { PROXY_BASE } from "../utils/proxy-path";
 import { USAGE_RIGHTS_INTRO, usageRightsClauses } from "../utils/usage-rights";
 import prisma from "../db.server";
@@ -11,6 +13,7 @@ import { liveOnlineStoreProducts } from "../utils/product-availability.server";
 import { parseProducts, verifyBuyer, wallRewardOffer, hasReward, type BuyerCheck, type ProductScope } from "../utils/wall-campaigns.server";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { canvasJsonResponse } from "../utils/canvas.server";
+import { refreshWall } from "../utils/public-media.server";
 
 /**
  * App Proxy catch-all route.
@@ -379,6 +382,20 @@ export async function action({ request }: ActionFunctionArgs) {
   const resolved = await resolveRequest(request);
   if ("error" in resolved) return resolved.error;
   const { shop, brandName, loggedInCustomerId, proxyPath, url } = resolved;
+
+  // POST /pixel — checkout web pixel reports which wall posts the shopper watched
+  // (covers "Buy it now" checkouts, which skip the cart). Public; the server only
+  // credits products linked to this shop's posts, within 7 days, on a real order.
+  if (proxyPath === "pixel" && request.method === "POST") {
+    try {
+      const text = (await request.text()).slice(0, 8000);
+      const body = JSON.parse(text || "{}");
+      await recordPixelViews(shop.id, body.orderId, parsePixelSeen(body.seen));
+    } catch (err) {
+      console.warn("[sales] pixel report ignored:", err);
+    }
+    return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*" } });
+  }
 
   // POST /campaign/:id/upload-url — direct browser → R2 upload, step 1 (JSON)
   const uploadUrlMatch = proxyPath.match(/^campaign\/([^/]+)\/upload-url$/);
@@ -1424,6 +1441,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
     return errorRedirect(shop.shopDomain, campaignId, "upload_failed");
   }
 
+  await refreshWall(campaignId); // spots left changed
   // Redirect to confirmation
   return new Response(null, {
     status: 302,
@@ -1657,6 +1675,7 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
     },
   });
 
+  await refreshWall(campaignId); // spots left changed
   return uploadJson({ redirect: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}` });
 }
 
@@ -2217,6 +2236,7 @@ async function handleDeleteSubmission(submissionId: string, shop: ShopInfo, bran
   await prisma.submission.delete({
     where: { id: submissionId },
   });
+  await refreshWall(submission.campaignId); // spots left changed
 
   // Redirect back to account page using client-side redirect (proxy doesn't forward 302)
   const redirectUrl = `${PROXY_BASE}/account?shop=${shop.shopDomain}&deleted=1`;
