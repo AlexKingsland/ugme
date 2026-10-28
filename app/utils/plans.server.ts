@@ -112,7 +112,11 @@ export async function checkStorageLimit(shopId: string, planTier: PlanTierKey) {
   };
 }
 
-/** Check submissions this calendar month vs plan limit. Returns { used, limit, ok } */
+/**
+ * APPROVED submissions this calendar month vs the plan's monthly limit.
+ * Pending and rejected submissions never count — the limit is applied when
+ * the merchant approves, not when customers upload.
+ */
 export async function checkSubmissionLimit(shopId: string, planTier: PlanTierKey) {
   const plan = getPlan(planTier);
   const now = new Date();
@@ -120,7 +124,8 @@ export async function checkSubmissionLimit(shopId: string, planTier: PlanTierKey
   const count = await prisma.submission.count({
     where: {
       campaign: { shopId },
-      createdAt: { gte: monthStart },
+      status: "APPROVED",
+      reviewedAt: { gte: monthStart },
     },
   });
   return {
@@ -131,7 +136,10 @@ export async function checkSubmissionLimit(shopId: string, planTier: PlanTierKey
   };
 }
 
-/** Combined gate check — returns which limits are hit (if any) */
+/**
+ * Upload gate. Customers can always submit while there's storage left; the
+ * monthly limit only applies to approvals (see checkSubmissionLimit).
+ */
 export async function checkPlanGates(shopId: string, planTier: PlanTierKey, additionalBytes?: number) {
   const [storage, submissions] = await Promise.all([
     checkStorageLimit(shopId, planTier),
@@ -146,11 +154,8 @@ export async function checkPlanGates(shopId: string, planTier: PlanTierKey, addi
   return {
     storage,
     submissions,
-    canAcceptSubmission: !wouldExceedStorage && submissions.ok,
-    blockedReasons: [
-      ...(wouldExceedStorage ? ["Storage limit reached"] : []),
-      ...(!submissions.ok ? ["Monthly submission limit reached"] : []),
-    ],
+    canAcceptSubmission: !wouldExceedStorage,
+    blockedReasons: [...(wouldExceedStorage ? ["Storage limit reached"] : [])],
   };
 }
 

@@ -29,7 +29,7 @@ export type CanvasItem = {
   width: number | null;
   height: number | null;
   caption: string | null;
-  /** "Sam K." when the customer opted in to showing their name */
+  /** First name ("Sam") when the customer opted in to showing their name */
   author: string | null;
   /** Every post comes from a verified buyer */
   verified: true;

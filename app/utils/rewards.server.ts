@@ -19,7 +19,7 @@ import { createCustomerDiscountCode, rewardCodeFor } from "./discount-codes.serv
 import { getProviderAdapter, type AdminGraphqlClient } from "./providers";
 import { findActiveRewardToReplace, isSingleDiscountProvider } from "./reward-gating.server";
 import { sendRewardDeliveredEmail, type NotifyResult } from "./email/notifications.server";
-import { creditStoreCredit, StoreCreditError } from "./store-credit.server";
+import { creditStoreCredit, findRecentStoreCredit, StoreCreditError } from "./store-credit.server";
 
 export interface RewardShop {
   id: string;
@@ -83,7 +83,7 @@ export async function fulfillReward(params: {
   }
 
   const campaign = submission.campaign;
-  let outcome: RewardOutcome;
+  let outcome: RewardOutcome = { status: "FAILED", reason: "Reward was not attempted." };
   let fields: Fields = {};
 
   try {
@@ -96,29 +96,52 @@ export async function fulfillReward(params: {
       if (!(amount > 0)) fail("Wall campaign has no store credit amount set.");
       if (!submission.customer.shopifyCustomerId) fail("Customer has no Shopify customer ID.");
       if (!admin) fail("Shopify admin access is unavailable for this attempt.");
-      // A previous attempt that may have reached Shopify must be checked by a human
-      if (submission.reward?.failureReason?.startsWith("UNCERTAIN")) {
-        fail(`${submission.reward.failureReason} (check the customer's store credit in Shopify, then clear failureReason to retry)`);
-      }
       const expiresAt = campaign.storeCreditExpiryDays
         ? new Date(Date.now() + campaign.storeCreditExpiryDays * 24 * 60 * 60 * 1000)
         : null;
-      try {
-        const credited = await creditStoreCredit(admin!, {
-          shopifyCustomerId: submission.customer.shopifyCustomerId!,
-          amount,
-          expiresAt,
-        });
-        fields = {
-          externalDiscountId: credited.transactionId,
-          discountProvider: "SHOPIFY_STORE_CREDIT",
-          storeCreditAmount: credited.amount,
-          expiresAt,
-        };
-        outcome = { status: "APPLIED" };
-      } catch (err) {
-        if (err instanceof StoreCreditError) fail(err.uncertain ? `UNCERTAIN: ${err.message}` : err.message);
-        throw err;
+      const creditedSince = async (since: Date) =>
+        findRecentStoreCredit(admin!, { shopifyCustomerId: submission.customer.shopifyCustomerId!, amount, since });
+      let resolved = false;
+      // A previous attempt may have reached Shopify: check the customer's store credit first
+      if (submission.reward?.failureReason?.startsWith("UNCERTAIN")) {
+        const since = new Date((submission.reward.lastAttemptAt ?? submission.reward.createdAt).getTime() - 10 * 60 * 1000);
+        const found = await creditedSince(since);
+        if (found === null) {
+          fail(`${submission.reward.failureReason} (couldn't check the customer's store credit — approve the app's "read store credit" permission, or check in Shopify and clear failureReason to retry)`);
+        }
+        if (found) {
+          fields = { discountProvider: "SHOPIFY_STORE_CREDIT", storeCreditAmount: amount, expiresAt };
+          outcome = { status: "APPLIED" };
+          resolved = true;
+        }
+      }
+      if (!resolved) {
+        const attemptStarted = new Date(Date.now() - 60 * 1000);
+        try {
+          const credited = await creditStoreCredit(admin!, {
+            shopifyCustomerId: submission.customer.shopifyCustomerId!,
+            amount,
+            expiresAt,
+          });
+          fields = {
+            externalDiscountId: credited.transactionId,
+            discountProvider: "SHOPIFY_STORE_CREDIT",
+            storeCreditAmount: credited.amount,
+            expiresAt,
+          };
+          outcome = { status: "APPLIED" };
+        } catch (err) {
+          if (!(err instanceof StoreCreditError)) throw err;
+          if (!err.uncertain) fail(err.message);
+          // Uncertain: look before we leap — did the credit land anyway?
+          const found = await creditedSince(attemptStarted);
+          if (found) {
+            fields = { discountProvider: "SHOPIFY_STORE_CREDIT", storeCreditAmount: amount, expiresAt };
+            outcome = { status: "APPLIED" };
+          } else {
+            fail(found === false ? err.message : `UNCERTAIN: ${err.message}`);
+          }
+        }
       }
     } else if (campaign.rewardType === "DISCOUNT_CODE") {
       // ── Shopify discount code ───────────────────────────────

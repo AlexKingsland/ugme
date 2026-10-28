@@ -30,6 +30,7 @@ import { parseProducts, wallRewardOffer, type WallProduct } from "../../utils/wa
 import { syncWallCampaignsNow } from "../../utils/canvas.server";
 import { addToThemeUrl } from "../../utils/wall-theme.server";
 import { PROXY_BASE } from "../../utils/proxy-path";
+import { liveOnlineStoreProducts } from "../../utils/product-availability.server";
 import { validateWall, type WallForm } from "../../utils/wall-validate";
 
 import type { RewardChoice } from "../../utils/wall-validate";
@@ -130,6 +131,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const activating = intent === "activate";
   const errors = validateWall(f, activating || existing?.status === "ACTIVE");
   if (errors.length) return json({ errors }, { status: 400 });
+
+  // Only products customers can open/buy on the Online Store
+  if (f.productScope === "SPECIFIC" && f.products.length) {
+    const live = await liveOnlineStoreProducts(admin.graphql, f.products.map((p) => p.id));
+    const notLive = live ? f.products.filter((p) => !live.has(p.id)) : [];
+    if (notLive.length) {
+      return json(
+        { errors: notLive.map((p) => `${p.title} isn't published to your Online Store. Publish it in Shopify or remove it from this wall campaign.`) },
+        { status: 400 },
+      );
+    }
+  }
 
   const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
   /** Optional min/expiry fields: 0 (or blank) means "none" */
@@ -264,18 +277,36 @@ export default function WallCampaignEditor() {
         type: "product",
         multiple: true,
         selectionIds: f.products.map((p) => ({ id: p.id })),
-        filter: { variants: false },
+        // Only products customers can buy: no drafts/archived, published to the Online Store
+        filter: { variants: false, draft: false, archived: false, query: "published_status:published" },
       });
       if (selected) {
-        set(
-          "products",
-          selected.map((p: any) => ({
-            id: p.id,
-            title: p.title,
-            handle: p.handle ?? null,
-            imageUrl: p.images?.[0]?.originalSrc ?? p.images?.[0]?.url ?? null,
-          })),
-        );
+        let picked: WallProduct[] = selected.map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          handle: p.handle ?? null,
+          imageUrl: p.images?.[0]?.originalSrc ?? p.images?.[0]?.url ?? null,
+        }));
+        // Double-check with Shopify — the picker filter isn't guaranteed
+        const res = await fetch("/app/api/products-live", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: picked.map((p) => p.id) }),
+        }).then((r) => r.json()).catch(() => ({ live: null }));
+        if (Array.isArray(res.live)) {
+          const live = new Set<string>(res.live);
+          const dropped = picked.filter((p) => !live.has(p.id));
+          picked = picked.filter((p) => live.has(p.id));
+          if (dropped.length) {
+            shopify.toast.show(
+              dropped.length === 1
+                ? `${dropped[0].title} isn't on your Online Store, so it wasn't added`
+                : `${dropped.length} products aren't on your Online Store, so they weren't added`,
+              { isError: true, duration: 6000 },
+            );
+          }
+        }
+        set("products", picked);
       }
     } catch {
       /* picker closed */
@@ -405,7 +436,7 @@ export default function WallCampaignEditor() {
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">Products</Text>
-                <Text as="p" tone="subdued">Only customers who bought these can submit. Their videos link to the product they bought.</Text>
+                <Text as="p" tone="subdued">Only customers who bought these can submit. Their videos link to the product they bought. Only products published to your Online Store can be picked.</Text>
                 <ChoiceList
                   title="Products"
                   titleHidden

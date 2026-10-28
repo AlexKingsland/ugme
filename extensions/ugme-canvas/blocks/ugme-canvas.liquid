@@ -10,6 +10,8 @@
   assign wall_id = wall.campaign_id.value
   assign wall_status = wall.status.value
   assign proxy_base = '/apps/social-wall'
+  assign store_handle = shop.permanent_domain | remove: '.myshopify.com'
+  assign admin_app = 'https://admin.shopify.com/store/' | append: store_handle | append: '/apps/79239f951610fa45ab1160d2fe4438f6/app'
   assign height = block.settings.height | append: 'vh'
   if block.settings.height_mobile
     assign height_mobile = block.settings.height_mobile | append: 'vh'
@@ -74,11 +76,11 @@
   <div class="ugme-wall-placeholder" style="display:block;margin:24px auto;max-width:640px;padding:32px 24px;border:2px dashed #c9cccf;border-radius:12px;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#303030;background:#fafafa;">
     <div style="font-size:16px;font-weight:650;margin-bottom:6px;">Social Wall</div>
     {%- if wall_id == blank -%}
-      <div style="font-size:14px;color:#616161;line-height:1.5;">Pick a <b>Wall campaign</b> in this block's settings.<br>No wall campaigns yet? Create one in the Social Wall app, then reload the editor.</div>
-      <a href="/admin/apps/79239f951610fa45ab1160d2fe4438f6/app/walls/new" target="_top" style="display:inline-block;margin-top:14px;padding:9px 16px;border-radius:8px;background:#303030;color:#fff;text-decoration:none;font-size:13px;font-weight:600;">Create a wall campaign</a>
+      <div style="font-size:14px;color:#616161;line-height:1.5;">Pick a <b>Wall campaign</b> in this block's settings.<br>No wall campaigns yet? Create one in the Social Wall app (opens in a new tab), then reload the editor.</div>
+      <a href="{{ admin_app }}/walls/new" target="_blank" rel="noopener" style="display:inline-block;margin-top:14px;padding:9px 16px;border-radius:8px;background:#303030;color:#fff;text-decoration:none;font-size:13px;font-weight:600;">Create a wall campaign</a>
     {%- else -%}
       <div style="font-size:14px;color:#616161;line-height:1.5;"><b>{{ wall.title.value | escape }}</b> isn't active, so this block is hidden on your store.<br>Activate it in the Social Wall app to show it.</div>
-      <a href="/admin/apps/79239f951610fa45ab1160d2fe4438f6/app/walls/{{ wall_id }}" target="_top" style="display:inline-block;margin-top:14px;padding:9px 16px;border-radius:8px;background:#303030;color:#fff;text-decoration:none;font-size:13px;font-weight:600;">Open wall campaign</a>
+      <a href="{{ admin_app }}/walls/{{ wall_id }}" target="_blank" rel="noopener" style="display:inline-block;margin-top:14px;padding:9px 16px;border-radius:8px;background:#303030;color:#fff;text-decoration:none;font-size:13px;font-weight:600;">Open wall campaign</a>
     {%- endif -%}
   </div>
 {%- endif -%}

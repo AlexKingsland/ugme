@@ -16,11 +16,14 @@ import {
   Banner,
   TextField,
   Tag,
+  InlineGrid,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { approveSubmission } from "../../utils/approval.server";
+import { mediaUrlsFor } from "../../utils/submission-media.server";
+import { checkSubmissionLimit, type PlanTierKey } from "../../utils/plans.server";
 
 function timeAgo(date: string | Date): string {
   const d = typeof date === "string" ? new Date(date) : date;
@@ -40,18 +43,6 @@ function formatDuration(secs: number | null): string {
 
 
 
-
-/**
- * Resolve a contentUrl to a viewable URL.
- * R2 keys (r2://...) get a presigned download URL; others pass through.
- */
-async function resolveContentUrl(contentUrl: string): Promise<string> {
-  const key = extractKeyFromContentUrl(contentUrl);
-  if (key && key !== "pending") {
-    return getPresignedDownloadUrl(key);
-  }
-  return contentUrl;
-}
 
 import { campaignRewardLabel } from "../../utils/rewards/presenters";
 import { parseProducts } from "../../utils/wall-campaigns";
@@ -95,7 +86,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       campaignTitle: submission.campaign.title,
       campaignMoment: submission.campaign.moment,
       contentType: submission.contentType,
-      contentUrl: await resolveContentUrl(submission.contentUrl),
+      ...(await (async () => {
+        const { viewUrl, downloadUrl } = await mediaUrlsFor(submission);
+        return { contentUrl: viewUrl, downloadUrl };
+      })()),
       thumbnailUrl: submission.thumbnailUrl,
       durationSecs: submission.durationSecs,
       description: submission.description,
@@ -129,13 +123,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
             return [] as string[];
           }
         })(),
-        who:
-          submission.campaign.productScope === "ALL"
-            ? "Anyone who has ordered"
-            : `Buyers of ${parseProducts(submission.campaign.products).map((p) => p.title).join(", ") || "selected products"}`,
+        scopeAll: submission.campaign.productScope === "ALL",
+        products: parseProducts(submission.campaign.products),
       },
     },
     nextPendingId: nextPending?.id || null,
+    approvals: await (async () => {
+      const a = await checkSubmissionLimit(shop.id, (shop.planTier as PlanTierKey) || "FREE");
+      return { used: a.used, limit: Number.isFinite(a.limit) ? a.limit : null, reached: !a.ok };
+    })(),
   });
 };
 
@@ -212,8 +208,21 @@ const DENY_REASONS = [
   "Other",
 ];
 
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
+}
+
+function ProductThumb({ url, size, round }: { url: string | null; size: number; round?: boolean }) {
+  return (
+    <div style={{ width: size, height: size, flex: `0 0 ${size}px`, borderRadius: round ? 999 : 8, overflow: "hidden", background: "var(--p-color-bg-surface-secondary)", border: "1px solid var(--p-color-border-secondary)" }}>
+      {url && <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+    </div>
+  );
+}
+
 export default function SubmissionDetail() {
-  const { submission, nextPendingId } = useLoaderData<typeof loader>();
+  const { submission, nextPendingId, approvals } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as
     | { success?: boolean; action?: string; error?: string; rewardStatus?: string; rewardError?: string }
     | undefined;
@@ -244,7 +253,7 @@ export default function SubmissionDetail() {
 
   return (
     <Page
-      backAction={{ content: "Library", url: "/app/library" }}
+      backAction={{ content: "Submissions", url: "/app/library" }}
       title={`Submission from ${submission.displayName}`}
       titleMetadata={
         <Badge tone={isPending ? "attention" : submission.status === "APPROVED" ? "success" : "critical"}>
@@ -253,9 +262,16 @@ export default function SubmissionDetail() {
       }
       secondaryActions={nextPendingId ? [{ content: "Next in queue ›", url: `/app/library/${nextPendingId}` }] : []}
     >
+      {actionData?.error && (
+        <Box paddingBlockEnd="400">
+          <Banner tone="critical" action={/approvals included/.test(actionData.error) ? { content: "Upgrade plan", url: "/app/settings/billing" } : undefined}>
+            {actionData.error}
+          </Banner>
+        </Box>
+      )}
       {actionData?.success && (
         <Box paddingBlockEnd="400">
-          <Banner tone="success">
+          <Banner tone={actionData.action === "approved" && actionData.rewardStatus === "FAILED" ? "warning" : "success"}>
             {actionData.action === "approved"
               ? submission.hasReward
                 ? actionData.rewardStatus === "FAILED"
@@ -268,295 +284,222 @@ export default function SubmissionDetail() {
       )}
 
       <Layout>
-        {/* Media preview */}
+        {/* ── Row 1: the content + the decision ── */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
-              <div style={{
-                position: "relative",
-                borderRadius: 12,
-                overflow: "hidden",
-                background: "#1a1a1a",
-                aspectRatio: "9/16",
-                maxHeight: 560,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}>
-                {submission.contentType === "VIDEO" ? (
-                  submission.contentUrl.startsWith("http") ? (
-                    <video
-                      src={submission.contentUrl}
-                      controls
-                      style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                    />
-                  ) : (
-                    <>
-                      <img
-                        src={submission.thumbnailUrl || "https://placehold.co/400x600/1a1a1a/666?text=Video"}
-                        alt="Video thumbnail"
-                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      />
-                      <div style={{
-                        position: "absolute", inset: 0,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        background: "rgba(0,0,0,0.3)",
-                      }}>
-                        <div style={{
-                          width: 64, height: 64, borderRadius: "50%",
-                          background: "rgba(255,255,255,0.9)",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                        }}>
-                          <div style={{
-                            width: 0, height: 0,
-                            borderTop: "14px solid transparent",
-                            borderBottom: "14px solid transparent",
-                            borderLeft: "22px solid #1a1a1a",
-                            marginLeft: 4,
-                          }} />
-                        </div>
-                      </div>
-                    </>
-                  )
+              <div style={{ borderRadius: 12, overflow: "hidden", background: "#111", height: 520, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {submission.contentType === "VIDEO" && submission.contentUrl.startsWith("http") ? (
+                  <video
+                    src={submission.contentUrl}
+                    poster={submission.thumbnailUrl?.startsWith("http") ? submission.thumbnailUrl : undefined}
+                    controls
+                    playsInline
+                    // Not approved yet → review only: no download/cast/picture-in-picture
+                    {...(submission.downloadUrl ? {} : { controlsList: "nodownload noremoteplayback", disablePictureInPicture: true, onContextMenu: (e: React.MouseEvent) => e.preventDefault() })}
+                    style={{ width: "100%", height: "100%", objectFit: "contain", background: "#111" }}
+                  />
                 ) : (
                   <img
                     src={submission.thumbnailUrl || submission.contentUrl}
-                    alt="Submission photo"
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    alt=""
+                    draggable={false}
+                    onContextMenu={submission.downloadUrl ? undefined : (e) => e.preventDefault()}
+                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
                   />
                 )}
               </div>
-
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {submission.contentType === "VIDEO" ? "Video" : "Photo"} · {(submission.fileBytes / (1024 * 1024)).toFixed(1)} MB
-                    {submission.durationSecs ? ` · ${formatDuration(submission.durationSecs)}` : ""}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Submitted {timeAgo(submission.createdAt)}
-                  </Text>
-                </BlockStack>
-                <Badge>{submission.campaignTitle}</Badge>
+              <InlineStack align="space-between" blockAlign="center" gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {submission.contentType === "VIDEO" ? "Video" : "Photo"} · {(submission.fileBytes / (1024 * 1024)).toFixed(1)} MB
+                  {submission.durationSecs ? ` · ${formatDuration(submission.durationSecs)}` : ""} · Submitted {timeAgo(submission.createdAt)}
+                </Text>
+                {submission.downloadUrl ? (
+                  <Button url={submission.downloadUrl} size="slim">Download</Button>
+                ) : (
+                  <Text as="span" variant="bodySm" tone="subdued">Download available after approval</Text>
+                )}
               </InlineStack>
-
               {submission.description && (
-                <>
-                  <Divider />
-                  <Text as="p" tone="subdued">{submission.description}</Text>
-                </>
+                <div style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 10, padding: "10px 12px" }}>
+                  <BlockStack gap="100">
+                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Message from the customer</Text>
+                    <Text as="p" variant="bodyMd">{submission.description}</Text>
+                  </BlockStack>
+                </div>
               )}
             </BlockStack>
           </Card>
         </Layout.Section>
 
-        {/* Decision sidebar */}
         <Layout.Section variant="oneThird">
           <BlockStack gap="400">
-            {/* Decision card */}
             {isPending ? (
-              <>
-                <Card>
-                  <BlockStack gap="400">
-                    <Text as="h2" variant="headingMd">Make a decision</Text>
-                    <Text as="p" tone="subdued">
-                      {submission.hasReward
-                        ? `Approving adds this submission to your wall and sends ${submission.displayName} ${rewardText}.`
-                        : "Approving adds this submission to your wall."}
-                    </Text>
-
-                    <InlineStack gap="200">
-                      <Button
-                        variant="primary"
-                        tone="success"
-                        onClick={handleApprove}
-                        loading={isActing}
-                      >
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Make a decision</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {submission.hasReward
+                      ? `Approving adds this to your wall and sends ${submission.displayName} ${rewardText}.`
+                      : "Approving adds this to your wall."}
+                  </Text>
+                  {approvals.reached && (
+                    <Banner tone="warning" action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
+                      You've approved {approvals.used} of {approvals.limit} submissions this month. Upgrade to approve this one now, or approve it next month.
+                    </Banner>
+                  )}
+                  {!showDenyPanel ? (
+                    <BlockStack gap="200">
+                      <Button variant="primary" tone="success" onClick={handleApprove} loading={isActing} disabled={approvals.reached} fullWidth>
                         {submission.hasReward ? `Approve + send ${rewardText}` : "Approve"}
                       </Button>
-                      <Button
-                        tone="critical"
-                        onClick={() => setShowDenyPanel(true)}
-                        loading={isActing}
-                      >
+                      <Button tone="critical" onClick={() => setShowDenyPanel(true)} disabled={isActing} fullWidth>
                         Deny
                       </Button>
-                    </InlineStack>
-
-                    <Text as="p" variant="bodySm" tone="caution">
-                      ⚠ This cannot be undone.
-                    </Text>
-                  </BlockStack>
-                </Card>
-
-                {/* Deny reasons panel */}
-                {showDenyPanel && (
-                  <Card>
+                    </BlockStack>
+                  ) : (
                     <BlockStack gap="300">
-                      <Text as="h3" variant="headingMd">If you deny, why isn't this a match?</Text>
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">Why isn't this a match?</Text>
                       <InlineStack gap="200" wrap>
                         {DENY_REASONS.map((reason) => (
-                          <Button
-                            key={reason}
-                            pressed={selectedReason === reason}
-                            onClick={() => setSelectedReason(reason)}
-                            size="slim"
-                          >
+                          <Button key={reason} pressed={selectedReason === reason} onClick={() => setSelectedReason(reason)} size="slim">
                             {reason}
                           </Button>
                         ))}
                       </InlineStack>
                       <TextField
-                        label="Optional note for the customer"
+                        label="Note for the customer"
                         labelHidden
-                        placeholder="Add an optional note for context..."
+                        placeholder="Optional note for the customer…"
                         value={denyNote}
                         onChange={setDenyNote}
                         multiline={2}
                         autoComplete="off"
                       />
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        The customer will see the reason you choose.
-                      </Text>
                       <InlineStack gap="200">
-                        <Button
-                          tone="critical"
-                          variant="primary"
-                          onClick={handleDeny}
-                          disabled={!selectedReason}
-                          loading={isActing}
-                        >
+                        <Button tone="critical" variant="primary" onClick={handleDeny} disabled={!selectedReason} loading={isActing}>
                           Confirm deny
                         </Button>
-                        <Button onClick={() => { setShowDenyPanel(false); setSelectedReason(null); }}>
-                          Cancel
-                        </Button>
+                        <Button onClick={() => { setShowDenyPanel(false); setSelectedReason(null); }}>Cancel</Button>
                       </InlineStack>
                     </BlockStack>
-                  </Card>
-                )}
-              </>
+                  )}
+                  <Text as="p" variant="bodySm" tone="subdued">Decisions can't be undone.</Text>
+                </BlockStack>
+              </Card>
             ) : (
               <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Decision</Text>
-                  <Divider />
-                  <InlineStack gap="200" blockAlign="center">
+                <BlockStack gap="200">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd">Decision</Text>
                     <Badge tone={submission.status === "APPROVED" ? "success" : "critical"}>
-                      {submission.status}
+                      {submission.status === "APPROVED" ? "Approved" : "Denied"}
                     </Badge>
-                    <Text as="span" tone="subdued">
-                      {submission.reviewedAt ? timeAgo(submission.reviewedAt) : ""}
-                    </Text>
                   </InlineStack>
-                  {submission.status === "APPROVED" && (
-                    <InlineStack align="space-between">
-                      <Text as="span" tone="subdued">Reward</Text>
-                      <Text as="span" fontWeight="bold">{rewardText}</Text>
-                    </InlineStack>
+                  {submission.reviewedAt && <Text as="p" variant="bodySm" tone="subdued">Reviewed {timeAgo(submission.reviewedAt)}</Text>}
+                  {submission.status === "APPROVED" && submission.hasReward && (
+                    <Text as="p" variant="bodyMd">Reward: <b>{rewardText}</b></Text>
                   )}
-                  {submission.rejectionReason && (
-                    <>
-                      <InlineStack align="space-between">
-                        <Text as="span" tone="subdued">Reason</Text>
-                        <Text as="span">{submission.rejectionReason}</Text>
-                      </InlineStack>
-                    </>
-                  )}
-                  {submission.reviewNote && (
-                    <InlineStack align="space-between">
-                      <Text as="span" tone="subdued">Note</Text>
-                      <Text as="span">{submission.reviewNote}</Text>
-                    </InlineStack>
-                  )}
+                  {submission.rejectionReason && <Text as="p" variant="bodyMd">Reason: {submission.rejectionReason}</Text>}
+                  {submission.reviewNote && <Text as="p" variant="bodySm" tone="subdued">“{submission.reviewNote}”</Text>}
                 </BlockStack>
               </Card>
             )}
 
-            {/* What this submission is for */}
+            {/* Who shared it */}
             <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingMd">Wall campaign</Text>
-                  <Button variant="plain" url={`/app/walls/${submission.wall.id}`}>View</Button>
+              <BlockStack gap="400">
+                <InlineStack gap="300" blockAlign="center" wrap={false}>
+                  <div style={{ width: 40, height: 40, flex: "0 0 40px", borderRadius: 999, background: "var(--p-color-bg-fill-secondary)", display: "grid", placeItems: "center", fontWeight: 650, fontSize: 14, color: "var(--p-color-text-secondary)" }}>
+                    {initials(submission.displayName)}
+                  </div>
+                  <BlockStack gap="050">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>{submission.displayName}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued" truncate>{submission.email}</Text>
+                  </BlockStack>
                 </InlineStack>
-                <InlineStack gap="200" blockAlign="center">
-                  <Text as="p" variant="bodyMd" fontWeight="semibold">{submission.wall.title}</Text>
-                  <Badge tone={submission.wall.status === "ACTIVE" ? "success" : "attention"}>
-                    {submission.wall.status === "ACTIVE" ? "Active" : submission.wall.status === "PAUSED" ? "Paused" : "Draft"}
-                  </Badge>
-                </InlineStack>
-                <BlockStack gap="100">
-                  <Text as="p" variant="bodySm" tone="subdued">Asked for</Text>
-                  <Text as="p" variant="bodyMd">{submission.wall.ask}</Text>
-                  {submission.wall.checklist.map((c) => (
-                    <Text as="p" key={c} variant="bodySm" tone="subdued">• {c}</Text>
-                  ))}
-                </BlockStack>
-                <InlineStack align="space-between" gap="200">
-                  <Text as="span" variant="bodySm" tone="subdued">Reward</Text>
-                  <Text as="span" variant="bodySm">{rewardText}</Text>
-                </InlineStack>
-                <InlineStack align="space-between" gap="200" wrap={false}>
-                  <Text as="span" variant="bodySm" tone="subdued">Who can share</Text>
-                  <Text as="span" variant="bodySm" alignment="end">{submission.wall.who}</Text>
-                </InlineStack>
-              </BlockStack>
-            </Card>
 
-            {/* Products the customer bought (shown as product cards on the wall) */}
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack gap="200" blockAlign="center">
-                  <Text as="h3" variant="headingMd">Linked products</Text>
-                  <Badge tone="success">Verified purchase</Badge>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">What this customer bought. Shoppers see these as product cards on the wall.</Text>
-                {submission.products.length ? (
-                  submission.products.map((p) => (
-                    <InlineStack key={p.id} gap="300" blockAlign="center" wrap={false}>
-                      <div style={{ width: 40, height: 40, flex: "0 0 40px", borderRadius: 8, overflow: "hidden", background: "var(--p-color-bg-surface-secondary)", border: "1px solid var(--p-color-border-secondary)" }}>
-                        {p.imageUrl && <img src={p.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
-                      </div>
-                      <Text as="span" variant="bodyMd">{p.title}</Text>
-                    </InlineStack>
-                  ))
-                ) : (
-                  <Text as="p" variant="bodySm" tone="subdued">No products linked.</Text>
-                )}
-              </BlockStack>
-            </Card>
-
-            {/* Submission info */}
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h3" variant="headingMd">Details</Text>
-                <Divider />
-                <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Customer</Text>
-                  <Text as="span">{submission.email}</Text>
-                </InlineStack>
-                <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Name on the wall</Text>
-                  <Text as="span">{submission.showsName || "Hidden (shows “Verified buyer”)"}</Text>
-                </InlineStack>
-                <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Type</Text>
-                  <Text as="span">{submission.contentType === "VIDEO" ? "Video" : "Photo"}</Text>
-                </InlineStack>
-                <InlineStack align="space-between">
-                  <Text as="span" tone="subdued">Size</Text>
-                  <Text as="span">{(submission.fileBytes / (1024 * 1024)).toFixed(1)} MB</Text>
-                </InlineStack>
-                {submission.durationSecs && (
-                  <InlineStack align="space-between">
-                    <Text as="span" tone="subdued">Duration</Text>
-                    <Text as="span">{formatDuration(submission.durationSecs)}</Text>
+                <BlockStack gap="200">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Bought</Text>
+                    <Badge tone="success">Verified purchase</Badge>
                   </InlineStack>
-                )}
+                  {submission.products.length ? (
+                    submission.products.map((p) => (
+                      <InlineStack key={p.id} gap="300" blockAlign="center" wrap={false}>
+                        <ProductThumb url={p.imageUrl} size={36} />
+                        <Text as="span" variant="bodyMd" truncate>{p.title}</Text>
+                      </InlineStack>
+                    ))
+                  ) : (
+                    <Text as="p" variant="bodySm" tone="subdued">No products linked.</Text>
+                  )}
+                  <Text as="p" variant="bodySm" tone="subdued">Shown as product cards next to this post on the wall.</Text>
+                </BlockStack>
+
+                <InlineStack align="space-between" blockAlign="center" gap="200">
+                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">On the wall as</Text>
+                  <Text as="p" variant="bodySm">{submission.showsName || "“Verified buyer” (name hidden)"}</Text>
+                </InlineStack>
               </BlockStack>
             </Card>
           </BlockStack>
+        </Layout.Section>
+
+        {/* ── Row 2: what it was submitted to ── */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center" gap="300">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h2" variant="headingMd">{submission.wall.title}</Text>
+                  <Badge tone={submission.wall.status === "ACTIVE" ? "success" : "attention"}>
+                    {submission.wall.status === "ACTIVE" ? "Active" : submission.wall.status === "PAUSED" ? "Paused" : "Draft"}
+                  </Badge>
+                  <Badge tone={submission.hasReward ? "success" : "info"}>
+                    {submission.hasReward ? `Reward: ${rewardText}` : "Featured, no reward"}
+                  </Badge>
+                </InlineStack>
+                <Button variant="plain" url={`/app/walls/${submission.wall.id}`}>View wall campaign</Button>
+              </InlineStack>
+
+              <InlineGrid columns={{ xs: 1, md: submission.wall.checklist.length ? 2 : 1 }} gap="400">
+                <div style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 12, padding: 16, height: "100%" }}>
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">You asked for</Text>
+                    <Text as="p" variant="bodyLg">{submission.wall.ask}</Text>
+                  </BlockStack>
+                </div>
+                {submission.wall.checklist.length > 0 && (
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Checklist</Text>
+                    {submission.wall.checklist.map((c) => (
+                      <div key={c} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", border: "1px solid var(--p-color-border-secondary)", borderRadius: 10 }}>
+                        <span style={{ width: 18, height: 18, flex: "0 0 18px", borderRadius: 999, background: "var(--p-color-bg-fill-success-secondary)", color: "var(--p-color-text-success)", display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700 }}>✓</span>
+                        <Text as="span" variant="bodyMd">{c}</Text>
+                      </div>
+                    ))}
+                  </BlockStack>
+                )}
+              </InlineGrid>
+
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Who can share</Text>
+                {submission.wall.scopeAll ? (
+                  <Text as="p" variant="bodyMd">Anyone who has ordered from your store</Text>
+                ) : (
+                  <InlineStack gap="200" wrap>
+                    {submission.wall.products.map((p) => (
+                      <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "4px 12px 4px 4px", border: "1px solid var(--p-color-border-secondary)", borderRadius: 999 }}>
+                        <ProductThumb url={p.imageUrl} size={24} round />
+                        <Text as="span" variant="bodySm">{p.title}</Text>
+                      </span>
+                    ))}
+                  </InlineStack>
+                )}
+              </BlockStack>
+            </BlockStack>
+          </Card>
         </Layout.Section>
       </Layout>
     </Page>

@@ -3,8 +3,9 @@
  * again. For us (the Social Wall team), not for merchants.
  *
  * Store credit failures marked "UNCERTAIN" (the request may have reached
- * Shopify) are NOT retried automatically: check the customer's store credit in
- * Shopify, then clear Reward.failureReason for that submission and re-run.
+ * Shopify) are resolved by first checking the customer's store credit history
+ * (read_store_credit_accounts): found → marked delivered; not found → credited.
+ * If that check isn't possible, they're left alone — never credited twice.
  *
  *   npm run rewards:retry -- --dry-run          # list problem rewards, change nothing
  *   npm run rewards:retry                       # retry all of them

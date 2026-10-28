@@ -11,7 +11,7 @@ export type MediaItem = {
   width?: number | null;
   height?: number | null;
   caption?: string | null;
-  /** "Sam K." when the buyer opted in to showing their name */
+  /** First name ("Sam") when the buyer opted in to showing their name */
   author?: string | null;
   /** Posts come from verified buyers */
   verified?: boolean;

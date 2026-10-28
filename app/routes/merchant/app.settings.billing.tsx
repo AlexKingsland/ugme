@@ -280,10 +280,10 @@ export default function BillingPage() {
                 <BlockStack gap="200">
                   <InlineStack align="space-between">
                     <Text as="span" variant="bodySm" fontWeight="semibold">
-                      Submissions this month
+                      Approved this month
                     </Text>
                     <Text as="span" variant="bodySm" tone="subdued">
-                      {submissions.used} / {submissions.limit === Infinity ? "∞" : submissions.limit}
+                      {submissions.used} / {submissions.limit == null || submissions.limit === Infinity ? "∞" : submissions.limit}
                     </Text>
                   </InlineStack>
                   <ProgressBar
@@ -369,7 +369,7 @@ function PlanCard({
           </InlineStack>
           <InlineStack gap="200">
             <Text as="span" variant="bodySm" fontWeight="semibold">
-              Submissions:
+              Approved submissions:
             </Text>
             <Text as="span" variant="bodySm">
               {plan.submissionLabel}

@@ -7,7 +7,7 @@ application_url = "https://social-wall.cloverkitstudio.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,write_store_credit_account_transactions"
+scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions"
 
 [webhooks]
 api_version = "2026-10"

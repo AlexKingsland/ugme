@@ -66,7 +66,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.submission.count({ where: { ...inShop, status: "PENDING" } }),
     prisma.reward.count({ where: { customer: { shopId: shop.id }, status: "APPLIED", rewardType: { in: ["DISCOUNT_CODE", "STORE_CREDIT"] } } }),
     prisma.submission.aggregate({ where: inShop, _sum: { fileBytes: true } }),
-    prisma.submission.count({ where: { ...inShop, createdAt: { gte: monthStart } } }),
+    prisma.submission.count({ where: { ...inShop, status: "APPROVED", reviewedAt: { gte: monthStart } } }),
     prisma.submission.findMany({
       where: { ...inShop, status: "PENDING" },
       include: { customer: { select: { email: true } }, campaign: { select: { title: true } } },
@@ -133,29 +133,27 @@ function StatCard({ title, value, helpText, url }: { title: string; value: numbe
   );
 }
 
-function UsageCard({ title, used, limit, usedLabel, limitLabel, planName, nearFull, full }: {
-  title: string; used: number; limit: number; usedLabel: string; limitLabel: string; planName: string; nearFull: string; full: string;
+function usagePct(used: number, limit: number | null | undefined) {
+  return !limit || limit === Infinity ? 0 : Math.min((used / limit) * 100, 100);
+}
+
+function UsageCard({ title, used, limit, usedLabel, limitLabel, planName }: {
+  title: string; used: number; limit: number; usedLabel: string; limitLabel: string; planName: string;
 }) {
-  const pct = limit === Infinity || !limit ? 0 : Math.min((used / limit) * 100, 100);
+  const pct = usagePct(used, limit);
   const isHigh = pct >= 80;
-  const isCritical = pct >= 95;
   return (
     <Card>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
           <Text as="h2" variant="headingMd">{title}</Text>
-          <Badge tone={isCritical ? "critical" : isHigh ? "attention" : "info"}>{`${planName} plan`}</Badge>
+          <Badge tone={isHigh ? "critical" : "info"}>{`${planName} plan`}</Badge>
         </InlineStack>
-        <ProgressBar progress={pct} tone={isCritical ? "critical" : isHigh ? "highlight" : "primary"} size="small" />
+        <ProgressBar progress={pct} tone={isHigh ? "critical" : "primary"} size="small" />
         <InlineStack align="space-between">
-          <Text as="p" variant="bodySm" tone="subdued">{usedLabel}</Text>
+          <Text as="p" variant="bodySm" tone={isHigh ? "critical" : "subdued"}>{usedLabel}</Text>
           <Text as="p" variant="bodySm" tone="subdued">{limitLabel}</Text>
         </InlineStack>
-        {isHigh && (
-          <Banner tone={isCritical ? "critical" : "warning"} action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
-            {isCritical ? full : nearFull}
-          </Banner>
-        )}
       </BlockStack>
     </Card>
   );
@@ -173,6 +171,28 @@ export default function Dashboard() {
   return (
     <Page title="Dashboard" primaryAction={{ content: "Create wall campaign", url: "/app/walls/new" }}>
       <BlockStack gap="500">
+        {(() => {
+          const storagePct = usagePct(storage.usedBytes, storage.plan.storageBytes);
+          const approvalLimit = submissions.plan.submissionsPerMonth;
+          const approvalPct = usagePct(submissions.monthlyCount, approvalLimit);
+          const atLimit = approvalLimit != null && approvalLimit !== Infinity && submissions.monthlyCount >= approvalLimit;
+          const banners: { key: string; tone: "warning" | "critical"; title: string; body: string }[] = [];
+          if (atLimit) {
+            banners.push({ key: "approvals", tone: "critical", title: "You've reached this month's approval limit", body: `You've approved ${submissions.monthlyCount} of ${approvalLimit} submissions this month. New submissions wait safely as pending — upgrade to approve them now.` });
+          } else if (approvalPct >= 80) {
+            banners.push({ key: "approvals", tone: "warning", title: "You're close to this month's approval limit", body: `${submissions.monthlyCount} of ${approvalLimit} approvals used. Customers can keep submitting — you just can't approve beyond the limit.` });
+          }
+          if (storagePct >= 95) {
+            banners.push({ key: "storage", tone: "critical", title: "You're almost out of storage", body: `${formatBytes(storage.usedBytes)} of ${storage.plan.storageLabel} used. Customers can't upload once storage is full.` });
+          } else if (storagePct >= 80) {
+            banners.push({ key: "storage", tone: "warning", title: "Storage is getting full", body: `${formatBytes(storage.usedBytes)} of ${storage.plan.storageLabel} used.` });
+          }
+          return banners.map((b) => (
+            <Banner key={b.key} tone={b.tone} title={b.title} action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
+              {b.body}
+            </Banner>
+          ));
+        })()}
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
           <StatCard title="Live walls" value={stats.liveWalls} />
           <StatCard title="Waiting for review" value={stats.pendingCount} helpText={stats.pendingCount ? "Review now" : "All caught up"} url={stats.pendingCount ? "/app/library" : undefined} />
@@ -188,18 +208,14 @@ export default function Dashboard() {
             usedLabel={`${formatBytes(storage.usedBytes)} used`}
             limitLabel={`${storage.plan.storageLabel} limit`}
             planName={storage.plan.name}
-            nearFull="Storage is getting full. Upgrade to keep accepting submissions."
-            full="You're almost out of storage. Upgrade your plan to keep accepting submissions."
           />
           <UsageCard
-            title="Submissions this month"
+            title="Approved this month"
             used={submissions.monthlyCount}
             limit={submissions.plan.submissionsPerMonth}
-            usedLabel={`${submissions.monthlyCount} this month`}
-            limitLabel={`${submissions.plan.submissionLabel} limit`}
+            usedLabel={`${submissions.monthlyCount} approved`}
+            limitLabel={submissions.plan.submissionLabel.replace("/ month", "approvals / month")}
             planName={submissions.plan.name}
-            nearFull="You're getting close to this month's submission limit."
-            full="You're almost at this month's submission limit. Upgrade to keep accepting submissions."
           />
         </InlineGrid>
 

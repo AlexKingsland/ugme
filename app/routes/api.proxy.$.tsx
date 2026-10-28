@@ -7,6 +7,7 @@ import { proxyLayout } from "../utils/proxy-layout.server";
 import crypto from "crypto";
 import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl, getPresignedUploadUrl, headObject, posterKeyFor, createMultipartUpload, getPresignedPartUrl, completeMultipartUpload, abortMultipartUpload } from "../utils/r2.server";
 import { unauthenticated } from "../shopify.server";
+import { liveOnlineStoreProducts } from "../utils/product-availability.server";
 import { parseProducts, verifyBuyer, wallRewardOffer, hasReward, type BuyerCheck, type ProductScope } from "../utils/wall-campaigns.server";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { canvasJsonResponse } from "../utils/canvas.server";
@@ -78,6 +79,24 @@ function spotsText(n: number) {
   return n === 1 ? "1 spot left" : `${n} spots left`;
 }
 
+/** "12 of 50 spots filled" with a progress bar (amber when 5 or fewer are left). */
+function spotsBarHtml(filled: number, total: number): string {
+  const left = Math.max(0, total - filled);
+  const pct = Math.min(100, Math.round((filled / total) * 100));
+  const low = left <= 5;
+  const color = low ? "#d97706" : "var(--ugme-accent)";
+  return `
+    <div style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; margin-bottom: 6px;">
+        <span style="font-weight: 600;">${filled} of ${total} spots filled</span>
+        <span style="color: ${low ? "#b45309" : "var(--ugme-muted)"}; font-weight: ${low ? 600 : 400};">${spotsText(left)}</span>
+      </div>
+      <div style="height: 6px; border-radius: 999px; background: var(--ugme-border); overflow: hidden;" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${filled}" aria-label="Spots filled">
+        <div style="height: 100%; width: ${pct}%; background: ${color}; border-radius: 999px;"></div>
+      </div>
+    </div>`;
+}
+
 function productNames(campaign: { productScope: string; products: string }): string {
   if (campaign.productScope === "ALL") return "our products";
   const names = parseProducts(campaign.products).map((p) => p.title).filter(Boolean);
@@ -86,20 +105,61 @@ function productNames(campaign: { productScope: string; products: string }): str
   return names.slice(0, -1).join(", ") + " or " + names[names.length - 1];
 }
 
-function buyerGatePage(
+/** Which of these products can shoppers actually open on the storefront (active + published)? */
+async function liveProductIds(shop: ShopInfo, ids: string[]): Promise<Set<string> | null> {
+  try {
+    const { admin } = await unauthenticated.admin(shop.shopDomain);
+    return await liveOnlineStoreProducts(admin.graphql, ids);
+  } catch {
+    return null; // unknown → keep the links
+  }
+}
+
+/** "Shop" links for the wall's products — one button, or a small product list when there are several. */
+async function shopLinksHtml(shop: ShopInfo, campaign: { productScope: string; products: string }): Promise<string> {
+  const base = `https://${shop.shopDomain}`;
+  let products = campaign.productScope === "ALL" ? [] : parseProducts(campaign.products).filter((p) => p.handle);
+  // Unpublished products 404 on the storefront — don't link to them
+  const live = await liveProductIds(shop, products.map((p) => p.id));
+  if (live) products = products.filter((p) => live.has(p.id));
+  if (!products.length) {
+    return `<a href="${base}/${campaign.productScope === "ALL" ? "collections/all" : ""}" class="ugme-btn ugme-btn--primary" style="display: inline-block; width: auto;">Shop now</a>`;
+  }
+  if (products.length === 1) {
+    const p = products[0];
+    return `<a href="${base}/products/${encodeURIComponent(p.handle!)}" class="ugme-btn ugme-btn--primary" style="display: inline-block; width: auto;">Shop ${escapeHtml(p.title)}</a>`;
+  }
+  return `<div style="display: flex; flex-direction: column; gap: 10px; text-align: left; max-width: 420px; margin: 0 auto;">
+    ${products
+      .slice(0, 6)
+      .map(
+        (p) => `<a href="${base}/products/${encodeURIComponent(p.handle!)}" style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius); text-decoration: none; color: inherit;">
+        ${p.imageUrl
+          ? `<img src="${escapeHtml(p.imageUrl)}" alt="" style="width: 48px; height: 48px; flex: 0 0 48px; border-radius: 8px; object-fit: cover; background: #f3f3f3;" />`
+          : `<span style="width: 48px; height: 48px; flex: 0 0 48px; border-radius: 8px; background: var(--ugme-surface);"></span>`}
+        <span style="flex: 1; min-width: 0; font-weight: 600; font-size: 14px; line-height: 1.35;">${escapeHtml(p.title)}</span>
+        <span style="font-size: 13px; font-weight: 600; color: var(--ugme-muted); white-space: nowrap;">Shop →</span>
+      </a>`,
+      )
+      .join("")}
+  </div>`;
+}
+
+async function buyerGatePage(
   check: Exclude<BuyerCheck, { status: "eligible" }>,
   shop: ShopInfo,
   brandName: string,
   campaign: { productScope: string; products: string },
-): Response {
+): Promise<Response> {
   const notBuyer = check.status === "not_buyer";
+  const shopLinks = notBuyer ? await shopLinksHtml(shop, campaign) : "";
   const body = notBuyer
     ? `
       <div style="text-align: center; padding: 40px 0;">
         <div style="font-size: 48px; margin-bottom: 16px;">🛍️</div>
         <h1 style="font-size: 20px; margin-bottom: 8px;">This wall is for customers</h1>
         <p style="color: var(--ugme-muted); margin-bottom: 24px; line-height: 1.6;">Only verified buyers of <strong>${escapeHtml(productNames(campaign))}</strong> can share to this wall. Once you've ordered, come back and share your video.</p>
-        <a href="https://${shop.shopDomain}/" class="ugme-btn ugme-btn--primary" style="display: inline-block; width: auto;">Shop now</a>
+        ${shopLinks}
       </div>`
     : `
       <div style="text-align: center; padding: 40px 0;">
@@ -223,7 +283,7 @@ async function fetchCustomerEmail(shopDomain: string, accessToken: string, custo
   }
 }
 
-/** "Sam K." for customers who opt in to showing their name on the wall. */
+/** "Sam" — first name only, for customers who opt in to showing their name on the wall. */
 async function customerDisplayName(shop: ShopInfo, shopifyCustomerId: string): Promise<string | null> {
   try {
     const { admin } = await unauthenticated.admin(shop.shopDomain);
@@ -231,10 +291,8 @@ async function customerDisplayName(shop: ShopInfo, shopifyCustomerId: string): P
     const res = await admin.graphql(`#graphql
       query WallCustomerName($id: ID!) { customer(id: $id) { firstName lastName } }`, { variables: { id: gid } });
     const body: any = await res.json();
-    const first = String(body?.data?.customer?.firstName || "").trim();
-    const last = String(body?.data?.customer?.lastName || "").trim();
-    if (!first) return null;
-    return (last ? `${first} ${last[0].toUpperCase()}.` : first).slice(0, 40);
+    const first = String(body?.data?.customer?.firstName || "").trim().split(/\s+/)[0] || "";
+    return first ? first.slice(0, 30) : null;
   } catch (err) {
     console.warn("[wall] couldn't read customer name:", err);
     return null;
@@ -664,7 +722,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       no_file: "Please select a file to upload.",
       too_large: "File is too large. Maximum size is 1 GB.",
       upload_failed: "Upload failed. Please try again.",
-      plan_limit: "Submission limit reached. The store\u2019s current plan cannot accept more submissions right now.",
+      plan_limit: "This store can\u2019t accept new videos right now. Please try again later.",
     };
     const msg = errorMsgs[errorParam] || "Something went wrong. Please try again.";
     errorBannerHtml = '<div style="background: #fef2f2; color: #991b1b; padding: 14px 16px; border-radius: var(--ugme-radius); margin-bottom: 20px; font-size: 14px;">' + msg + '</div>';
@@ -680,7 +738,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       Get featured on the ${escapeHtml(brandName)} Social Wall · <span class="ugme-badge ugme-badge--reward" style="font-size: 12px; padding: 2px 8px;">${escapeHtml(reward)}</span>
     </p>
     ${campaign.moment?.trim() ? `<div style="background: var(--ugme-surface); border-radius: var(--ugme-radius); padding: 14px 16px; margin-bottom: 20px;"><div class="ugme-section-label" style="margin-bottom: 6px;">What to share</div><div style="font-size: 15px; line-height: 1.55;">${escapeHtml(campaign.moment)}</div></div>` : ""}
-    ${remaining !== null ? `<div style="font-size: 13px; font-weight: 600; margin-bottom: 10px; color: ${remaining <= 5 ? "#b45309" : "var(--ugme-fg)"};">${spotsText(remaining)} on this wall</div>` : ""}
+    ${remaining !== null && campaign.maxSubmissions ? spotsBarHtml(campaign.maxSubmissions - remaining, campaign.maxSubmissions) : ""}
     <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #047857; margin-bottom: 20px;"><span style="display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: #d1fae5; align-items: center; justify-content: center; font-size: 11px;">✓</span>Verified buyer of ${escapeHtml(buyer.products.map((p) => p.title).join(", ") || productNames(campaign))}</div>
 
     ${errorBannerHtml}
@@ -749,7 +807,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       <!-- Name on the wall (opt-in) -->
       <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px; cursor: pointer; padding: 12px; border-radius: var(--ugme-radius-sm); border: 1px solid var(--ugme-border); margin-bottom: 20px;">
         <input type="checkbox" name="showName" style="margin-top: 2px; accent-color: var(--ugme-accent); width: 18px; height: 18px; flex-shrink: 0;" />
-        <span>Show my first name and last initial on the wall<br><span style="color: var(--ugme-muted); font-size: 13px;">Otherwise your post just shows “Verified buyer”.</span></span>
+        <span>Show my first name on the wall<br><span style="color: var(--ugme-muted); font-size: 13px;">Otherwise your post just shows “Verified buyer”.</span></span>
       </label>
 
       <!-- Optional message -->
@@ -1383,7 +1441,7 @@ const UPLOAD_ERRORS: Record<string, string> = {
   too_large: "File is too large. Maximum size is 1 GB.",
   wrong_type: "That file type isn't accepted here.",
   upload_failed: "Upload failed. Please try again.",
-  plan_limit: "Submission limit reached. The store’s current plan cannot accept more submissions right now.",
+  plan_limit: "This store can’t accept new videos right now. Please try again later.",
   not_buyer: "Only verified buyers can share to this wall.",
   verify_failed: "We couldn’t confirm your purchase right now. Please try again in a moment.",
   closed: "This wall isn’t accepting posts right now.",

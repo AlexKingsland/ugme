@@ -1,4 +1,5 @@
 import prisma from "../db.server";
+import { checkSubmissionLimit, type PlanTierKey } from "./plans.server";
 import type { SubscriptionProvider } from "@prisma/client";
 import type { AdminGraphqlClient } from "./providers";
 import { fulfillReward } from "./rewards.server";
@@ -26,10 +27,20 @@ export interface ApprovalResult {
  * API errors stay internal (Reward.failureReason) and are retried by us.
  */
 function merchantMessage(reason?: string): string {
+  if (reason?.startsWith("UNCERTAIN")) {
+    return "Approved — we couldn't confirm the store credit went through. We'll check it before trying again, so the customer is never credited twice.";
+  }
   if (!reason || reason.startsWith("Unexpected error")) {
     return "Approved — but the reward couldn't be delivered right now. We've logged it and will retry it for you.";
   }
   return `Approved — but the reward couldn't be delivered: ${reason}`;
+}
+
+/** Thrown when the plan's monthly approval limit is reached. */
+export class ApprovalLimitError extends Error {
+  constructor(readonly used: number, readonly limit: number) {
+    super(`You've used all ${limit} approvals included in your plan this month. Upgrade your plan to approve more — this submission stays pending until then.`);
+  }
 }
 
 export async function approveSubmission(params: {
@@ -51,6 +62,13 @@ export async function approveSubmission(params: {
   });
   if (!submission || submission.campaign.shopId !== shop.id) {
     throw new Error("Submission not found or does not belong to this shop");
+  }
+
+  // Monthly limit = approved submissions this month (re-approving an approved one is free)
+  if (submission.status !== "APPROVED") {
+    const shopRow = await prisma.shop.findUnique({ where: { id: shop.id }, select: { planTier: true } });
+    const limit = await checkSubmissionLimit(shop.id, ((shopRow?.planTier as PlanTierKey) || "FREE"));
+    if (!limit.ok) throw new ApprovalLimitError(limit.used, limit.limit);
   }
 
   // Mark submission as approved

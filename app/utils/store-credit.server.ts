@@ -16,7 +16,6 @@ export interface CreditResult {
   transactionId: string | null;
   amount: number;
   currencyCode: string;
-  balance: string | null;
 }
 
 export async function creditStoreCredit(
@@ -40,7 +39,7 @@ export async function creditStoreCredit(
       `#graphql
       mutation WallStoreCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
         storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
-          storeCreditAccountTransaction { id amount { amount currencyCode } account { id balance { amount currencyCode } } }
+          storeCreditAccountTransaction { amount { amount currencyCode } }
           userErrors { field message code }
         }
       }`,
@@ -55,7 +54,16 @@ export async function creditStoreCredit(
       },
     );
     body = await res.json();
-  } catch (err) {
+  } catch (err: any) {
+    // The app's Admin client throws when Shopify answers with GraphQL errors.
+    const gqlErrors = err?.body?.errors?.graphQLErrors ?? err?.graphQLErrors;
+    if (Array.isArray(gqlErrors) && gqlErrors.length) {
+      const msg = gqlErrors.map((e: any) => e.message).join("; ");
+      // Shopify still runs a mutation when only a *returned* field is denied,
+      // so treat field-access errors as "may have been applied".
+      const fieldDenied = gqlErrors.some((e: any) => /access denied/i.test(e.message) && (e.path?.length ?? 0) > 1);
+      throw new StoreCreditError(`Store credit failed: ${msg}`, fieldDenied);
+    }
     // The request may or may not have reached Shopify — don't blindly retry.
     throw new StoreCreditError(`Store credit request failed: ${err instanceof Error ? err.message : String(err)}`, true);
   }
@@ -75,9 +83,49 @@ export async function creditStoreCredit(
   const tx = payload?.storeCreditAccountTransaction;
   if (!tx) throw new StoreCreditError("Store credit returned no transaction", true);
   return {
-    transactionId: tx.id ?? null,
+    transactionId: null,
     amount: Number(tx.amount?.amount ?? input.amount),
     currencyCode: tx.amount?.currencyCode ?? currencyCode,
-    balance: tx.account?.balance?.amount ?? null,
   };
+}
+
+
+/**
+ * Did this customer receive a store credit of `amount` since `since`?
+ * Used to resolve "uncertain" attempts (request may have reached Shopify)
+ * without ever crediting twice. Needs `read_store_credit_accounts`.
+ * Returns null when Shopify can't be asked (e.g. permission not approved yet).
+ */
+export async function findRecentStoreCredit(
+  admin: AdminGraphqlClient,
+  input: { shopifyCustomerId: string; amount: number; since: Date },
+): Promise<boolean | null> {
+  const customerId = input.shopifyCustomerId.startsWith("gid://")
+    ? input.shopifyCustomerId
+    : `gid://shopify/Customer/${input.shopifyCustomerId}`;
+  try {
+    const res = await admin.graphql(
+      `#graphql
+      query WallStoreCreditCheck($id: ID!) {
+        customer(id: $id) {
+          storeCreditAccounts(first: 10) {
+            nodes { transactions(first: 50, reverse: true) { nodes { __typename amount { amount } createdAt } } }
+          }
+        }
+      }`,
+      { variables: { id: customerId } },
+    );
+    const body: any = await res.json();
+    if (body?.errors?.length) return null;
+    const since = input.since.getTime();
+    for (const account of body?.data?.customer?.storeCreditAccounts?.nodes ?? []) {
+      for (const t of account?.transactions?.nodes ?? []) {
+        const amt = Number(t?.amount?.amount);
+        if (Math.abs(amt - input.amount) < 0.005 && new Date(t.createdAt).getTime() >= since && !/Debit/.test(t.__typename || "")) return true;
+      }
+    }
+    return false;
+  } catch {
+    return null;
+  }
 }

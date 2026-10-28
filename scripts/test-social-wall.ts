@@ -48,7 +48,9 @@ const ORDERS: Record<string, unknown[]> = {
   "333": [order([P1], true)], // only a cancelled order
 };
 let graphqlFails = false;
-let storeCreditMode: "ok" | "userError" | "network" = "ok";
+let storeCreditMode: "ok" | "userError" | "network" | "landedButError" = "ok";
+let creditCheckWorks = true; // false = app lacks read_store_credit_accounts
+const creditsGiven: { amount: string; createdAt: string }[] = [];
 const mockLog: string[] = [];
 
 // ── mocked Shopify Admin API (everything else hits the real network: R2) ──
@@ -70,10 +72,23 @@ globalThis.fetch = (async (input: any, init?: RequestInit) => {
       const id = /customer_id:(\d+)/.exec(variables.q || "")?.[1] || "";
       return json({ data: { orders: { nodes: ORDERS[id] ?? [] } } });
     }
+    if (op === "WallLiveProducts") {
+      const unpublished = new Set(["gid://shopify/Product/9002"]); // Test Wax isn't on the Online Store
+      return json({ data: { nodes: (variables.ids as string[]).map((id) => ({ id, status: "ACTIVE", publishedAt: unpublished.has(id) ? null : "2026-01-01T00:00:00Z" })) } });
+    }
     if (op === "WallCustomerName") return json({ data: { customer: { firstName: "Sam", lastName: "kingsland" } } });
     if (op === "WallShopCurrency") return json({ data: { shop: { currencyCode: "USD" } } });
+    if (op === "WallStoreCreditCheck") {
+      if (!creditCheckWorks) return json({ errors: [{ message: "Access denied for storeCreditAccounts field.", path: ["customer", "storeCreditAccounts"] }] });
+      return json({ data: { customer: { storeCreditAccounts: { nodes: [{ transactions: { nodes: creditsGiven.map((c) => ({ __typename: "StoreCreditAccountCreditTransaction", amount: { amount: c.amount }, createdAt: c.createdAt })).reverse() } }] } } } });
+    }
     if (op === "WallStoreCredit") {
       if (storeCreditMode === "network") throw new TypeError("fetch failed");
+      if (storeCreditMode === "landedButError") {
+        creditsGiven.push({ amount: variables.creditInput.creditAmount.amount, createdAt: new Date().toISOString() });
+        throw new TypeError("socket hang up"); // credited, but we never heard back
+      }
+      if (storeCreditMode === "ok") creditsGiven.push({ amount: variables.creditInput.creditAmount.amount, createdAt: new Date().toISOString() });
       if (storeCreditMode === "userError") return json({ data: { storeCreditAccountCredit: { storeCreditAccountTransaction: null, userErrors: [{ field: ["creditInput"], message: "Store credit is not enabled", code: "X" }] } } });
       return json({ data: { storeCreditAccountCredit: { storeCreditAccountTransaction: { id: "gid://shopify/StoreCreditAccountCreditTransaction/1", amount: { amount: variables.creditInput.creditAmount.amount, currencyCode: "USD" }, account: { id: "gid://shopify/StoreCreditAccount/1", balance: { amount: "7.0", currencyCode: "USD" } } }, userErrors: [] } } });
     }
@@ -215,12 +230,15 @@ section("Share page (customer)");
   check("…and the opt-in name checkbox", /name="showName"/.test(buyer.text));
   check("…with no UGME branding", !/UGME|UG-ME/.test(buyer.text));
   check("…and the full usage rights to read", /Read the full usage rights/.test(buyer.text) && /perpetual, non-exclusive, royalty-free license/.test(buyer.text));
-  check("no limit → no spots counter", !/spots? left/.test(buyer.text));
+  check("no limit → no spots bar", !/spots filled/.test(buyer.text));
   check("…and links on /apps/social-wall", /\/apps\/social-wall\/campaign\//.test(buyer.text) && !/\/apps\/ugme/.test(buyer.text));
   const other = await get(`campaign/${wallCredit.id}/submit`, "222");
   savePage("2-not-a-buyer", other.text);
   check("non-buyer is blocked with a friendly page", other.status === 403 && /This wall is for customers/.test(other.text) && /Test Board/.test(other.text), other.status);
   check("cancelled-only customer is blocked", (await get(`campaign/${wallCredit.id}/submit`, "333")).status === 403);
+  check("non-buyer page links straight to the wall's product", other.text.includes(`https://${SHOP}/products/test-board`) && /Shop Test Board/.test(other.text));
+  const otherMulti = await get(`campaign/${wallNone.id}/submit`, "222");
+  check("unpublished products aren't linked (they'd 404)", otherMulti.text.includes("/products/test-board") && !otherMulti.text.includes("/products/test-wax"), otherMulti.text.slice(0, 300));
   graphqlFails = true;
   const broken = await get(`campaign/${wallCredit.id}/submit`, "111");
   graphqlFails = false;
@@ -253,7 +271,7 @@ let submissionId = "";
   const sub = await prisma.submission.findFirst({ where: { campaignId: wallCredit.id }, orderBy: { createdAt: "desc" } });
   submissionId = sub?.id || "";
   check("submission saved with the purchased product", parseProducts(sub?.products).map((p) => p.id).join() === P1.id, sub?.products);
-  check("opt-in name saved as first name + initial", sub?.displayName === "Sam K.", sub?.displayName);
+  check("opt-in name saved as first name only", sub?.displayName === "Sam", sub?.displayName);
   const again = await post(`campaign/${wallCredit.id}/upload-url`, "111", { fileName: "clip.mp4", fileType: "video/mp4", fileSize: 10 });
   check("one post per wall per customer", again.status === 409, again);
   const thanks = await get(`campaign/${wallCredit.id}/submitted`, "111");
@@ -274,7 +292,7 @@ section("Submission limit");
 {
   const limited = await mkWall("Test wall — limited", { maxSubmissions: 1, productScope: "ALL", products: "[]" });
   const page = await get(`campaign/${limited.id}/submit`, "222");
-  check("share page shows spots left", /1 spot left on this wall/.test(page.text), page.text.slice(0, 200));
+  check("share page shows a spots bar", /0 of 1 spots filled/.test(page.text) && /1 spot left/.test(page.text) && /role="progressbar"/.test(page.text), page.text.slice(0, 200));
   const info = JSON.parse((await get(`canvas`, undefined, { wall: limited.id })).text);
   check("wall data reports spots left", info.wall?.spotsLeft === 1, info.wall);
   const cust = await prisma.customer.findFirst({ where: { shopId: shopRow.id, shopifyCustomerId: "222" } });
@@ -305,18 +323,21 @@ const admin = { graphql: (q: string, o?: any) => fetch(`https://${SHOP}/admin/ap
   check("store credit rejected by Shopify → FAILED with reason", r1.status === "FAILED" && /not enabled/.test(r1.reason || ""), r1);
   storeCreditMode = "network";
   const r2 = await fulfillReward({ submissionId, shop: shopArg, admin });
-  check("network error → FAILED marked UNCERTAIN", r2.status === "FAILED" && /^UNCERTAIN/.test(r2.reason || ""), r2);
+  check("network error + check shows no credit → plain FAILED (safe to retry)", r2.status === "FAILED" && !/^UNCERTAIN/.test(r2.reason || ""), r2);
+  creditCheckWorks = false;
+  const r2b = await fulfillReward({ submissionId, shop: shopArg, admin });
+  check("network error + can't check (no permission) → UNCERTAIN", r2b.status === "FAILED" && /^UNCERTAIN/.test(r2b.reason || ""), r2b);
   storeCreditMode = "ok";
   const creditsBefore = mockLog.filter((o) => o === "WallStoreCredit").length;
   const r3 = await fulfillReward({ submissionId, shop: shopArg, admin });
-  check("UNCERTAIN credit is never retried automatically (no double credit)", r3.status === "FAILED" && mockLog.filter((o) => o === "WallStoreCredit").length === creditsBefore, r3);
-  await prisma.reward.update({ where: { submissionId }, data: { failureReason: null } });
+  check("UNCERTAIN + still can't check → never retried (no double credit)", r3.status === "FAILED" && mockLog.filter((o) => o === "WallStoreCredit").length === creditsBefore, r3);
+  creditCheckWorks = true;
   const before = mockLog.filter((o) => o === "WallStoreCredit").length;
   const r4 = await fulfillReward({ submissionId, shop: shopArg, admin });
   check("after a human clears it, store credit is applied", r4.status === "APPLIED", r4);
   check("…exactly one credit call", mockLog.filter((o) => o === "WallStoreCredit").length === before + 1);
   const rew = await prisma.reward.findUnique({ where: { submissionId } });
-  check("…amount + transaction recorded", rew?.storeCreditAmount === 7 && !!rew?.externalDiscountId && rew?.rewardType === "STORE_CREDIT", rew);
+  check("…amount recorded", rew?.storeCreditAmount === 7 && rew?.rewardType === "STORE_CREDIT", rew);
   check("…email sent (preview mode)", r4.email?.status === "sent", r4.email);
   const r5 = await fulfillReward({ submissionId, shop: shopArg, admin });
   check("re-running never credits twice", r5.alreadyApplied === true && mockLog.filter((o) => o === "WallStoreCredit").length === before + 1);
@@ -324,6 +345,20 @@ const admin = { graphql: (q: string, o?: any) => fetch(`https://${SHOP}/admin/ap
   check("re-opening the share link after approval shows 'You're on the wall' + the reward", /You're on the wall!/.test(back.text) && /\$7 store credit added to your account/.test(back.text) && !/in for review/.test(back.text), back.text.slice(0, 300));
   const acct = await get(`account`, "111");
   check("My posts shows the credit", /\$7 store credit added to your account/.test(acct.text) && /My posts/.test(acct.text), acct.text.slice(0, 300));
+
+  // credit lands but the response is lost → detected, not credited twice
+  {
+    const custA = await prisma.customer.findFirst({ where: { shopId: shopRow.id, shopifyCustomerId: "111" } });
+    const sx = await prisma.submission.create({ data: { campaignId: wallCredit.id, customerId: custA!.id, status: "APPROVED", contentType: "VIDEO", contentUrl: "https://example.com/x.mp4", rightsAccepted: true } });
+    storeCreditMode = "landedButError";
+    const n0 = creditsGiven.length;
+    const rx = await fulfillReward({ submissionId: sx.id, shop: shopArg, admin });
+    storeCreditMode = "ok";
+    check("credit landed but response lost → found in history, marked delivered", rx.status === "APPLIED", rx);
+    const rx2 = await fulfillReward({ submissionId: sx.id, shop: shopArg, admin });
+    check("…and never credited a second time", rx2.alreadyApplied === true && creditsGiven.length === n0 + 1, { rx2, credits: creditsGiven.length - n0 });
+    await prisma.submission.delete({ where: { id: sx.id } });
+  }
 
   // featured only
   const s2 = await prisma.submission.findFirst({ where: { campaignId: wallNone.id } });
@@ -346,6 +381,42 @@ const admin = { graphql: (q: string, o?: any) => fetch(`https://${SHOP}/admin/ap
   check("approved featured-only post says it's on the wall", /You're on the wall!/.test(featPage.text) && /Verified buyer badge/.test(featPage.text));
 }
 
+section("Monthly approval limit + downloads");
+{
+  const { approveSubmission, ApprovalLimitError } = await import("../app/utils/approval.server");
+  const { checkPlanGates, checkSubmissionLimit } = await import("../app/utils/plans.server");
+  const { mediaUrlsFor } = await import("../app/utils/submission-media.server");
+  await prisma.shop.update({ where: { id: shopRow.id }, data: { planTier: "FREE" } });
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const approvedNow = await prisma.submission.count({ where: { campaign: { shopId: shopRow.id }, status: "APPROVED", reviewedAt: { gte: monthStart } } });
+  const lim = await checkSubmissionLimit(shopRow.id, "FREE");
+  check("limit counts only approvals this month", lim.used === approvedNow, { used: lim.used, approvedNow });
+  const gates = await checkPlanGates(shopRow.id, "FREE", 10);
+  check("uploads aren't blocked by the monthly limit (storage only)", gates.blockedReasons.every((r: string) => /Storage/.test(r)));
+  // fill the month up to the Free limit (10) with approvals
+  const cust = await prisma.customer.findFirst({ where: { shopId: shopRow.id, shopifyCustomerId: "111" } });
+  const need = Math.max(0, lim.limit - lim.used);
+  for (let i = 0; i < need; i++) {
+    await prisma.submission.create({ data: { campaignId: wallNone.id, customerId: cust!.id, status: "APPROVED", reviewedAt: new Date(), contentType: "VIDEO", contentUrl: "https://example.com/f.mp4", rightsAccepted: true } });
+  }
+  const pendingOne = await prisma.submission.create({ data: { campaignId: wallNone.id, customerId: cust!.id, status: "PENDING", contentType: "VIDEO", contentUrl: "r2://initialteststore-2.myshopify.com/x/clip.mp4", rightsAccepted: true } });
+  let blocked: unknown = null;
+  try {
+    await approveSubmission({ submissionId: pendingOne.id, shop: shopArg, admin });
+  } catch (e) {
+    blocked = e;
+  }
+  check("approving past the monthly limit is blocked", blocked instanceof ApprovalLimitError, String(blocked));
+  const still = await prisma.submission.findUnique({ where: { id: pendingOne.id } });
+  check("…and the submission stays pending", still?.status === "PENDING");
+  const pendingUrls = await mediaUrlsFor(pendingOne);
+  check("pending submission: viewable, but no download link", !!pendingUrls.viewUrl && pendingUrls.downloadUrl === null);
+  check("pending view link is short-lived (15 min)", /X-Amz-Expires=900/.test(pendingUrls.viewUrl), pendingUrls.viewUrl.slice(0, 120));
+  const approvedUrls = await mediaUrlsFor({ ...pendingOne, status: "APPROVED" });
+  check("approved submission: download link forces a file download", !!approvedUrls.downloadUrl && /response-content-disposition=attachment/i.test(approvedUrls.downloadUrl), approvedUrls.downloadUrl?.slice(0, 120));
+  await prisma.shop.update({ where: { id: shopRow.id }, data: { planTier: "PRO" } });
+}
+
 // ── 4. the wall JSON ────────────────────────────────────────────
 section("Wall data");
 {
@@ -354,7 +425,7 @@ section("Wall data");
   savePage("canvas", w.text);
   check("active wall returns its approved posts", data.wall?.active === true && data.items.length === 1, data);
   const item = data.items[0] || {};
-  check("post has Verified buyer + name", item.verified === true && item.author === "Sam K." && /Verified buyer/.test(item.caption), item);
+  check("post has Verified buyer + first name", item.verified === true && item.author === "Sam" && /Verified buyer/.test(item.caption), item);
   check("post has product cards data (with handle)", item.products?.[0]?.handle === "test-board", item.products);
   check("share URL is the wall's share page", data.wall?.shareUrl === `/apps/social-wall/campaign/${wallCredit.id}/submit`, data.wall);
   const nameless = JSON.parse((await get(`canvas`, undefined, { wall: wallNone.id })).text).items[0] || {};

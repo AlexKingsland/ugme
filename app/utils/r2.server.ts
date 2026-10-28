@@ -85,10 +85,15 @@ export async function getPresignedUploadUrl(
 export async function getPresignedDownloadUrl(
   key: string,
   expiresIn = 3600,
+  opts: { downloadName?: string } = {},
 ): Promise<string> {
   const command = new GetObjectCommand({
     Bucket: R2_BUCKET_NAME,
     Key: key,
+    // Force a file download (Save as…) instead of playing in the tab
+    ...(opts.downloadName
+      ? { ResponseContentDisposition: `attachment; filename="${opts.downloadName.replace(/["\\\r\n]/g, "")}"` }
+      : {}),
   });
 
   return getSignedUrl(r2Client, command, { expiresIn });

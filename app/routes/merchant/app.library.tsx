@@ -1,8 +1,10 @@
 import { json } from "@remix-run/node";
 import { approveSubmission } from "../../utils/approval.server";
+import { checkSubmissionLimit } from "../../utils/plans.server";
+import { mediaUrlsFor } from "../../utils/submission-media.server";
 import { SubmissionThumbnail } from "../../components/SubmissionThumbnail";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, Link } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData, Link } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -18,6 +20,7 @@ import {
   Popover,
   ActionList,
   Icon,
+  Banner,
 } from "@shopify/polaris";
 import {
   MenuHorizontalIcon,
@@ -66,6 +69,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) {
     return json({
+      approvals: { used: 0, limit: null as number | null, reached: false },
       items: [], campaigns: [], products: [], counts: { pending: 0, approved: 0 },
       storage: { usedBytes: 0, plan: getPlan("FREE") },
       tab, campaignFilter, mediaFilter, sort, productFilter, usedFilter,
@@ -141,18 +145,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     _sum: { fileBytes: true },
   });
 
-  // Resolve R2 URLs to presigned download URLs
+  // Media URLs: pending → short-lived, play-only; approved → also a download link
   const resolvedItems = await Promise.all(
     items.map(async (s) => {
-      let resolvedUrl = s.contentUrl;
-      const r2Key = extractKeyFromContentUrl(s.contentUrl);
-      if (r2Key && r2Key !== "pending") {
-        try {
-          resolvedUrl = await getPresignedDownloadUrl(r2Key);
-        } catch {
-          resolvedUrl = s.contentUrl;
-        }
-      }
+      const { viewUrl: resolvedUrl, downloadUrl } = await mediaUrlsFor(s);
       return {
         id: s.id,
         email: s.customer.email,
@@ -161,6 +157,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         description: s.description || "",
         contentType: s.contentType,
         contentUrl: resolvedUrl,
+        downloadUrl,
         thumbnailUrl: s.thumbnailUrl,
         durationSecs: s.durationSecs,
         fileBytes: s.fileBytes,
@@ -178,7 +175,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     })
   );
 
+  const approvals = await checkSubmissionLimit(shop.id, (shop.planTier as PlanTierKey) || "FREE");
+
   return json({
+    approvals: { used: approvals.used, limit: Number.isFinite(approvals.limit) ? approvals.limit : null, reached: !approvals.ok },
     items: resolvedItems,
     campaigns: campaigns.map((c) => ({ id: c.id, title: c.title })),
     counts,
@@ -266,7 +266,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Library() {
-  const { items, campaigns, counts, storage, tab, campaignFilter, mediaFilter, sort, products, productFilter, usedFilter } = useLoaderData<typeof loader>();
+  const { items, campaigns, counts, storage, tab, campaignFilter, mediaFilter, sort, products, productFilter, usedFilter, approvals } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>() as { error?: string } | undefined;
   const submit = useSubmit();
   const navigation = useNavigation();
   const isActing = navigation.state === "submitting";
@@ -357,6 +358,16 @@ export default function Library() {
       }
     >
       <BlockStack gap="400">
+        {actionData?.error && (
+          <Banner tone="critical" action={/approvals included/.test(actionData.error) ? { content: "Upgrade plan", url: "/app/settings/billing" } : undefined}>
+            {actionData.error}
+          </Banner>
+        )}
+        {approvals.reached && currentTab === "pending" && counts.pending > 0 && (
+          <Banner tone="warning" title="Monthly approval limit reached" action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
+            You've approved {approvals.used} of {approvals.limit} submissions this month. Pending submissions stay safe here — upgrade to approve more, or they can be approved next month.
+          </Banner>
+        )}
         {/* Tab bar + storage */}
         <Card>
           <BlockStack gap="300">
@@ -675,14 +686,14 @@ export default function Library() {
                         >
                           <ActionList
                             items={[
-                              ...(hasResolvedUrl
+                              ...(asset.status === "APPROVED" && asset.downloadUrl
                                 ? [{
                                     content: "Download",
                                     icon: ImportIcon,
                                     onAction: () => {
                                       setOpenMenuId(null);
                                       const a = document.createElement("a");
-                                      a.href = asset.contentUrl;
+                                      a.href = asset.downloadUrl!;
                                       a.download = "";
                                       a.target = "_blank";
                                       a.click();
