@@ -22,6 +22,11 @@ api_version = "2026-10"
   topics = [ "refunds/create" ]
   uri = "/webhooks/refunds/create"
 
+  # Plan changes (approved / cancelled / frozen) — Shopify billing is the source of truth
+  [[webhooks.subscriptions]]
+  topics = [ "app_subscriptions/update" ]
+  uri = "/webhooks/app/subscriptions_update"
+
 [auth]
 redirect_urls = [ "https://social-wall.cloverkitstudio.com/api/auth" ]
 

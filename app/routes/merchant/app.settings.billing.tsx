@@ -18,19 +18,18 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
-import {
-  PLAN_DEFINITIONS,
-  getPlan,
-  checkStorageLimit,
-  checkSubmissionLimit,
-  formatBytes,
-  type PlanTierKey,
-} from "../../utils/plans.server";
+import { checkStorageLimit, checkSubmissionLimit } from "../../utils/plans.server";
+import { formatBytes } from "../../utils/format";
+import { PLAN_DEFINITIONS, getPlan, formatPlanPrice, type PlanTierKey } from "../../utils/plans";
+import { subscriptionName, syncPlanFromShopify } from "../../utils/billing.server";
 
 // ── Loader ──────────────────────────────────────────────────────
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
+  // Shopify billing decides the plan (covers returning from the approval page,
+  // declined charges, and changes made in Shopify admin)
+  await syncPlanFromShopify(admin.graphql, session.shop);
 
   const shop = await prisma.shop.findUnique({
     where: { shopDomain: session.shop },
@@ -59,14 +58,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       limit: submissions.limit,
       pct: submissions.pct,
     },
-    plans: Object.values(PLAN_DEFINITIONS),
+    plans: Object.values(PLAN_DEFINITIONS).filter((p) => !p.hidden || p.key === planTier),
   });
 };
 
 // ── Action — handle plan changes via Shopify App Billing ────────
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session, admin, redirect: adminRedirect } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
   const targetPlan = formData.get("plan") as PlanTierKey;
@@ -93,20 +92,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
 
-      await prisma.shop.update({
-        where: { shopDomain: session.shop },
-        data: {
-          planTier: "FREE",
-          shopifySubscriptionId: null,
-          planActivatedAt: new Date(),
-        },
-      });
-
+      await syncPlanFromShopify(admin.graphql, session.shop);
       return json({ success: true, plan: "FREE" });
     }
 
     // Enterprise — just flag it, no automatic billing
-    if (targetPlan === "ENTERPRISE") {
+    if (targetPlan === "ENTERPRISE" || getPlan(targetPlan).hidden) {
       return json({ success: false, enterprise: true });
     }
 
@@ -132,7 +123,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }`,
       {
         variables: {
-          name: `Social Wall ${plan.name}`,
+          name: subscriptionName(plan),
           lineItems: [
             {
               plan: {
@@ -162,21 +153,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    // Store the subscription ID so we can cancel later
-    if (result?.appSubscription?.id) {
-      await prisma.shop.update({
-        where: { shopDomain: session.shop },
-        data: {
-          shopifySubscriptionId: result.appSubscription.id,
-          planTier: targetPlan,
-          planActivatedAt: new Date(),
-        },
-      });
-    }
-
-    // Redirect merchant to Shopify's confirmation page
+    // Nothing is stored yet: the plan changes only once the merchant approves the
+    // charge (the billing page re-reads Shopify when they come back, and the
+    // app_subscriptions/update webhook confirms it).
+    // Shopify's approval page can't load inside the embedded app frame, so open it
+    // in the whole tab.
     if (result?.confirmationUrl) {
-      return redirect(result.confirmationUrl);
+      return adminRedirect(result.confirmationUrl, { target: "_top" });
     }
 
     return json({ success: false, error: "Could not create subscription" });
@@ -192,7 +175,8 @@ export default function BillingPage() {
     useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
-  const isSaving = navigation.state === "submitting";
+  // Only the plan that was clicked shows a spinner
+  const savingPlan = navigation.state !== "idle" ? (navigation.formData?.get("plan") as string | null) : null;
 
   // Check URL for charge_activated callback
   const urlParams =
@@ -246,7 +230,7 @@ export default function BillingPage() {
                 </BlockStack>
                 {currentPlan !== "FREE" && (
                   <Text as="span" variant="headingMd">
-                    ${plan.priceMonthly}/mo
+                    {formatPlanPrice(plan)}/mo
                   </Text>
                 )}
               </InlineStack>
@@ -309,14 +293,15 @@ export default function BillingPage() {
             Choose a plan
           </Text>
           <Box paddingBlockStart="400">
-            <InlineGrid columns={4} gap="400">
+            <InlineGrid columns={{ xs: 1, md: plans.length }} gap="400">
               {plans.map((p) => (
                 <PlanCard
                   key={p.key}
                   plan={p}
                   isCurrent={currentPlan === p.key}
+                  isDowngrade={p.rank < (plans.find((x) => x.key === currentPlan)?.rank ?? 0)}
                   onSelect={() => handleChangePlan(p.key)}
-                  loading={isSaving}
+                  loading={savingPlan === p.key}
                 />
               ))}
             </InlineGrid>
@@ -330,11 +315,13 @@ export default function BillingPage() {
 function PlanCard({
   plan,
   isCurrent,
+  isDowngrade,
   onSelect,
   loading,
 }: {
   plan: (typeof PLAN_DEFINITIONS)[PlanTierKey];
   isCurrent: boolean;
+  isDowngrade: boolean;
   onSelect: () => void;
   loading: boolean;
 }) {
@@ -352,7 +339,7 @@ function PlanCard({
             {isCurrent && <Badge tone="info">Current</Badge>}
           </InlineStack>
           <Text as="p" variant="headingLg">
-            {isEnterprise ? "Custom" : isFree ? "Free" : `$${plan.priceMonthly}/mo`}
+            {isEnterprise || isFree ? formatPlanPrice(plan) : `${formatPlanPrice(plan)}/mo`}
           </Text>
         </BlockStack>
 
@@ -407,7 +394,7 @@ function PlanCard({
               onClick={onSelect}
               loading={loading}
             >
-              {isFree ? "Downgrade" : "Upgrade"}
+              {isDowngrade ? "Downgrade" : "Upgrade"}
             </Button>
           )}
         </Box>

@@ -257,6 +257,29 @@ async function main() {
   check("not-found thrown by the admin client also reads as 'off'", (await px.pixelStatus(throwing)) === "off");
   check("other failures read as 'unknown' (no false alarm)", (await px.pixelStatus((async () => { throw new Error("network"); }) as any)) === "unknown");
 
+  console.log("\nPlans follow Shopify billing (never set before the charge is approved)");
+  const billing = await import("../app/utils/billing.server");
+  check("subscription names map to plans", billing.planKeyFromSubscriptionName("Social Wall Standard") === "STARTER" && billing.planKeyFromSubscriptionName("Social Wall Pro") === "PRO");
+  check("…including the old 'Starter' name", billing.planKeyFromSubscriptionName("Social Wall Starter") === "STARTER");
+  check("unknown names map to nothing", billing.planKeyFromSubscriptionName("Something else") === null);
+  let subs: any[] = [];
+  const subsGql = (async () => new Response(JSON.stringify({ data: { currentAppInstallation: { activeSubscriptions: subs } } }))) as any;
+  await prisma.shop.update({ where: { id: shop.id }, data: { planTier: "STARTER", shopifySubscriptionId: "gid://shopify/AppSubscription/1" } });
+  subs = [{ id: "gid://shopify/AppSubscription/1", name: "Social Wall Standard", status: "PENDING" }];
+  check("a pending (unapproved) charge leaves the store on Free", (await billing.syncPlanFromShopify(subsGql, SHOP)) === "FREE" && (await prisma.shop.findUnique({ where: { id: shop.id } }))?.planTier === "FREE");
+  subs = [{ id: "gid://shopify/AppSubscription/2", name: "Social Wall Pro", status: "ACTIVE" }];
+  await billing.syncPlanFromShopify(subsGql, SHOP);
+  const proShop = await prisma.shop.findUnique({ where: { id: shop.id } });
+  check("an approved charge sets the plan + subscription id", proShop?.planTier === "PRO" && proShop?.shopifySubscriptionId === "gid://shopify/AppSubscription/2", proShop);
+  subs = [];
+  await billing.syncPlanFromShopify(subsGql, SHOP);
+  check("cancelled in Shopify → back to Free", (await prisma.shop.findUnique({ where: { id: shop.id } }))?.planTier === "FREE");
+  const brokenGql = (async () => { throw new Error("network"); }) as any;
+  await prisma.shop.update({ where: { id: shop.id }, data: { planTier: "PRO" } });
+  check("if Shopify can't be reached the stored plan is kept", (await billing.syncPlanFromShopify(brokenGql, SHOP)) === null && (await prisma.shop.findUnique({ where: { id: shop.id } }))?.planTier === "PRO");
+  await prisma.shop.update({ where: { id: shop.id }, data: { planTier: "ENTERPRISE" } });
+  check("hand-assigned Enterprise isn't reset to Free", (await billing.syncPlanFromShopify(subsGql, SHOP)) === "ENTERPRISE");
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await prisma.$disconnect();
   process.exit(failed ? 1 : 0);

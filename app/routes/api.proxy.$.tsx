@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { recordPixelViews } from "../utils/attribution.server";
+import { canPostUnlimited } from "../utils/test-submitters.server";
 import { parsePixelSeen } from "../utils/attribution";
 import { PROXY_BASE } from "../utils/proxy-path";
 import { USAGE_RIGHTS_INTRO, usageRightsClauses } from "../utils/usage-rights";
@@ -690,7 +691,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
     where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
   });
 
-  if (existingSubmission) {
+  if (existingSubmission && !canPostUnlimited(shop.shopDomain, customer.email)) {
     return new Response(null, {
       status: 302,
       headers: { Location: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` },
@@ -1365,7 +1366,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
   const existing = await prisma.submission.findFirst({
     where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
   });
-  if (existing) {
+  if (existing && !canPostUnlimited(shop.shopDomain, customer.email)) {
     return new Response(null, {
       status: 302,
       headers: { Location: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` },
@@ -1483,7 +1484,7 @@ function signUpload(parts: string[]): string {
   return crypto.createHmac("sha256", secret).update(parts.join("|")).digest("hex");
 }
 
-/** Same checks as the multipart submit: campaign open, subscription (Recharge), one per customer. */
+/** Same checks as the multipart submit: campaign open, verified buyer, one per customer (except TEST_SUBMITTERS). */
 async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInCustomerId: string) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
@@ -1505,7 +1506,7 @@ async function preflightSubmission(campaignId: string, shop: ShopInfo, loggedInC
     where: { campaignId, customerId: customer.id, status: { not: "REJECTED" } },
     select: { id: true },
   });
-  if (existing) {
+  if (existing && !canPostUnlimited(shop.shopDomain, customer.email)) {
     return {
       ok: false as const,
       response: uploadJson({ redirect: `${PROXY_BASE}/campaign/${campaignId}/submitted?shop=${shop.shopDomain}&already=1` }, 409),

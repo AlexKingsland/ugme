@@ -9,6 +9,7 @@ import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { maybeSyncCampaignMetaobjects } from "../../utils/canvas.server";
 import { maybeEnsurePixelOnce } from "../../utils/web-pixel.server";
+import { maybeSyncPlan } from "../../utils/billing.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -30,6 +31,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Checkout pixel for sales attribution ("Buy it now" skips the cart) — set up once;
   // if the merchant disconnects it later, it stays off (Analytics offers to turn it on)
   maybeEnsurePixelOnce(admin.graphql, session.shop);
+  // Keep the stored plan in step with Shopify billing (throttled)
+  maybeSyncPlan(admin.graphql, session.shop);
 
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };

@@ -23,6 +23,7 @@ import {
 import { useState, useCallback, useEffect } from "react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
+import { getPlan, type PlanTierKey } from "../../utils/plans";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -41,6 +42,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         providerConnected: false,
         providerApiKey: "",
         defaultRewardCycles: 1,
+        planTier: "FREE",
+        planName: "Free",
       },
       isNew: true,
     });
@@ -58,6 +61,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         ? "••••••••" + shop.providerApiKey.slice(-4)
         : "",
       defaultRewardCycles: shop.defaultRewardCycles,
+      planTier: shop.planTier as string,
+      planName: getPlan((shop.planTier as PlanTierKey) || "FREE").name,
     },
     isNew: false,
   });
@@ -312,7 +317,7 @@ export default function SettingsPage() {
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">Current plan</Text>
-                <Badge>Free</Badge>
+                <Badge tone={shop.planTier === "FREE" ? undefined : "success"}>{shop.planName}</Badge>
               </InlineStack>
               <Text as="p" tone="subdued">
                 Upgrade your plan to unlock more storage and monthly submissions.
