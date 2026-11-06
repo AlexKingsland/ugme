@@ -46,10 +46,15 @@ export const CSS = `
 .ugme-overlay__media video,.ugme-overlay__media img{display:block;max-width:min(92vw,1100px);max-height:80dvh;width:auto;height:auto;background:#000}
 .ugme-overlay__caption{color:rgba(255,255,255,.75);font-size:13px;line-height:1.4;text-align:center;max-width:60ch}
 .ugme-overlay__media--with-products video,.ugme-overlay__media--with-products img{max-height:62dvh}
+.ugme-overlay__media--with-caption video,.ugme-overlay__media--with-caption img{max-height:68dvh}
+.ugme-overlay__media--with-products.ugme-overlay__media--with-caption video,.ugme-overlay__media--with-products.ugme-overlay__media--with-caption img{max-height:52dvh}
 .ugme-overlay__meta{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;color:rgba(255,255,255,.85);font-size:13px;line-height:1}
 .ugme-overlay__verified{display:inline-flex;align-items:center;gap:5px;padding:6px 10px 6px 8px;border-radius:999px;background:rgba(16,185,129,.18);color:#6ee7b7;font-weight:600;font-size:12px}
 .ugme-overlay__verified svg{width:13px;height:13px}
 .ugme-overlay__author{font-weight:600;color:#fff}
+.ugme-overlay__caption{margin:2px auto 0;max-width:min(calc(100vw - 48px),520px);color:rgba(255,255,255,.92);font-size:14px;line-height:1.45;text-align:center;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ugme-overlay__caption--more{cursor:pointer}
+.ugme-overlay__caption--open{display:block;-webkit-line-clamp:unset;max-height:18dvh;overflow-y:auto;cursor:pointer}
 .ugme-products{display:flex;flex-direction:column;gap:8px;width:min(calc(100vw - 48px),420px)}
 .ugme-product{display:grid;grid-template-columns:52px 1fr auto;align-items:center;gap:12px;padding:8px 10px 8px 8px;border-radius:12px;background:#fff;color:#111;text-align:left;box-shadow:0 6px 24px rgba(0,0,0,.25)}
 .ugme-product__media{display:block;width:52px;height:52px;border-radius:8px;overflow:hidden;background:#f3f4f6}

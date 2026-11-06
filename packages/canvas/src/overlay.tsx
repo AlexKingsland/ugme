@@ -20,6 +20,31 @@ const CheckIcon = () => (
   </svg>
 );
 
+/** The buyer's caption — up to 3 lines, tap to read the rest. */
+function Caption({ text }: { text: string }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLParagraphElement>(null);
+  const [clamped, setClamped] = React.useState(false);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setClamped(el.scrollHeight > el.clientHeight + 1);
+  }, [text]);
+  return (
+    <p
+      ref={ref}
+      className={`ugme-overlay__caption${open ? " ugme-overlay__caption--open" : ""}${clamped && !open ? " ugme-overlay__caption--more" : ""}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (clamped || open) setOpen((o) => !o);
+      }}
+    >
+      {"\u201C"}
+      {text}
+      {"\u201D"}
+    </p>
+  );
+}
+
 export function MediaOverlay({
   selected,
   onClose,
@@ -83,7 +108,7 @@ export function MediaOverlay({
         onClick={(e) => e.target === e.currentTarget && onClose()}
       >
         <div
-          className={`ugme-overlay__media${showProducts && item.products?.length ? " ugme-overlay__media--with-products" : ""}`}
+          className={`ugme-overlay__media${showProducts && item.products?.length ? " ugme-overlay__media--with-products" : ""}${item.message ? " ugme-overlay__media--with-caption" : ""}`}
           ref={mediaRef}
         >
           {item.type === "image" && <img src={item.src} alt={item.caption || ""} />}
@@ -102,6 +127,7 @@ export function MediaOverlay({
           )}
           {item.author && <span className="ugme-overlay__author">{item.author}</span>}
         </div>
+        {item.message && <Caption text={item.message} />}
         {showProducts && item.products && item.products.length > 0 && <ProductCards products={item.products} item={item} />}
       </div>
     </div>,

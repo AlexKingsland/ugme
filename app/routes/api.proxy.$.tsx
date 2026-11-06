@@ -829,8 +829,9 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       </label>
 
       <!-- Optional message -->
-      <div class="ugme-section-label">Message to ${escapeHtml(brandName)} (optional)</div>
-      <textarea name="message" placeholder="Anything you want us to know about your ${mediaWord}…" style="width: 100%; min-height: 80px; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius-sm); padding: 12px; font-size: 14px; font-family: inherit; resize: vertical; margin-bottom: 20px; background: var(--ugme-bg); color: var(--ugme-fg);"></textarea>
+      <div class="ugme-section-label">Caption (optional)</div>
+      <p style="font-size: 13px; color: var(--ugme-muted); margin: -4px 0 8px;">Shown with your post on the wall.</p>
+      <textarea name="message" maxlength="${CAPTION_MAX}" placeholder="Say something about your ${mediaWord}…" style="width: 100%; min-height: 80px; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius-sm); padding: 12px; font-size: 14px; font-family: inherit; resize: vertical; margin-bottom: 20px; background: var(--ugme-bg); color: var(--ugme-fg);"></textarea>
 
       <!-- Terms agreement -->
       <div style="background: var(--ugme-surface); border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 24px;">
@@ -1254,19 +1255,39 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         const posterUpload = uploadPoster(ticket, file);
 
         let parts = null;
+        let sentAny = false;
         try {
           if (ticket.mode === 'multipart') {
             parts = await uploadMultipart(ticket, file);
           } else {
+            // One-piece upload, retried like the parts of a large upload
             const report = makeProgress(file);
-            await putBlob(ticket.uploadUrl, file, ticket.contentType, report).catch(function(err) {
-              err = err || {}; err.started = true; throw err;
-            });
+            for (let attempt = 0; ; attempt++) {
+              try {
+                await putBlob(ticket.uploadUrl, file, ticket.contentType, function(loaded) {
+                  if (loaded > 0) sentAny = true;
+                  report(loaded);
+                });
+                break;
+              } catch (err) {
+                if (attempt >= 2 || (err && err.status === -1)) { err = err || {}; err.started = sentAny; throw err; }
+                showProgress('Connection hiccup — retrying…', 0, 0, file.size, '');
+                await new Promise(function(r) { setTimeout(r, 1000 * Math.pow(2, attempt)); });
+              }
+            }
           }
         } catch (err) {
-          // Couldn't reach storage at all (e.g. bucket CORS not set) → old path for small files.
-          if (err && err.status === 0 && !err.started && file.size <= LEGACY_MAX_BYTES) return nativeFallback();
-          return fail('Upload interrupted. Check your connection and try again.');
+          // Storage couldn't be reached or kept dropping the connection — often antivirus
+          // "web protection" or a network filter blocking cloud-storage uploads. Send the
+          // file through the store's own address instead (files up to 100 MB).
+          if (file.size <= LEGACY_MAX_BYTES && !(err && err.status === -1)) {
+            showProgress('Trying another way…', null, 0, 0, '');
+            return nativeFallback();
+          }
+          const started = !!(err && (err.started || sentAny));
+          return fail(started
+            ? 'The connection dropped during the upload. Check your connection and try again.'
+            : 'Your network or security software blocked the upload. Try another network (or turn off web protection in your antivirus) and try again.');
         }
 
         showProgress('Finishing up…', 100, file.size, file.size, '');
@@ -1340,7 +1361,9 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
 // path streams through the app proxy and buffers in memory, so it stays at 100 MB.
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1 GB
 const LEGACY_MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
-const MULTIPART_THRESHOLD = 64 * 1024 * 1024; // files above this upload in parts
+/** Public caption shown on the wall with the post */
+const CAPTION_MAX = 300;
+const MULTIPART_THRESHOLD = 16 * 1024 * 1024; // files above this upload in parts (each part retries on its own)
 const PART_SIZE = 16 * 1024 * 1024; // 16 MB parts (1 GB → 64 parts)
 
 async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName: string, loggedInCustomerId: string, request: Request) {
@@ -1417,7 +1440,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
       contentType: campaign.contentType,
       contentUrl: "r2://pending", // temporary, updated after upload
       fileBytes: file.size,
-      description: description || null,
+      description: description.trim().slice(0, CAPTION_MAX) || null,
       products: JSON.stringify(buyer.products),
       displayName: showName ? await customerDisplayName(shop, customer.shopifyCustomerId || loggedInCustomerId) : null,
       rightsAccepted: true,
@@ -1668,7 +1691,7 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
       thumbnailUrl,
       durationSecs,
       fileBytes: head.size,
-      description: (body.message || "").slice(0, 2000) || null,
+      description: String(body.message || "").trim().slice(0, CAPTION_MAX) || null,
       // Resolved on the server from the customer's orders — never trusted from the browser
       products: JSON.stringify(pre.products),
       displayName: body.showName ? await customerDisplayName(shop, pre.customer.shopifyCustomerId || loggedInCustomerId) : null,

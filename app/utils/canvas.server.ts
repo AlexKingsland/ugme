@@ -34,6 +34,8 @@ export type CanvasItem = {
   caption: string | null;
   /** First name ("Sam") when the customer opted in to showing their name */
   author: string | null;
+  /** The customer's caption, shown with the post */
+  message: string | null;
   /** Every post comes from a verified buyer */
   verified: true;
   /** Products this buyer purchased (product cards in the viewer) */
@@ -89,6 +91,7 @@ export async function getCanvasMedia(
       thumbnailUrl: true,
       displayName: true,
       products: true,
+      description: true,
     },
     orderBy: { createdAt: "desc" },
     take: MAX_ITEMS,
@@ -110,6 +113,7 @@ export async function getCanvasMedia(
         height: null,
         caption: s.displayName ? `${s.displayName} · Verified buyer` : "Verified buyer",
         author: s.displayName || null,
+        message: s.description ? s.description.slice(0, 300) : null,
         verified: true,
         products,
       };

@@ -15,6 +15,8 @@ export type MediaItem = {
   caption?: string | null;
   /** First name ("Sam") when the buyer opted in to showing their name */
   author?: string | null;
+  /** The buyer's caption for the post */
+  message?: string | null;
   /** Posts come from verified buyers */
   verified?: boolean;
   /** Products the buyer purchased — shown as product cards in the viewer */

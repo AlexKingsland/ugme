@@ -91,7 +91,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         const { viewUrl, downloadUrl } = await mediaUrlsFor(submission);
         return { contentUrl: viewUrl, downloadUrl };
       })()),
-      thumbnailUrl: submission.thumbnailUrl,
+      // Stored as an r2:// key — the browser needs a signed link (video poster)
+      thumbnailUrl: await (async () => {
+        const key = submission.thumbnailUrl ? extractKeyFromContentUrl(submission.thumbnailUrl) : null;
+        return key && key !== "pending" ? await getPresignedDownloadUrl(key, 15 * 60).catch(() => null) : null;
+      })(),
       durationSecs: submission.durationSecs,
       description: submission.description,
       fileBytes: submission.fileBytes,
@@ -303,7 +307,8 @@ export default function SubmissionDetail() {
                   />
                 ) : (
                   <img
-                    src={submission.thumbnailUrl || submission.contentUrl}
+                    // the full photo (the thumbnail is only a small preview)
+                    src={submission.contentUrl}
                     alt=""
                     draggable={false}
                     onContextMenu={submission.downloadUrl ? undefined : (e) => e.preventDefault()}
@@ -325,7 +330,7 @@ export default function SubmissionDetail() {
               {submission.description && (
                 <div style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 10, padding: "10px 12px" }}>
                   <BlockStack gap="100">
-                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Message from the customer</Text>
+                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Caption · shown on your wall</Text>
                     <Text as="p" variant="bodyMd">{submission.description}</Text>
                   </BlockStack>
                 </div>
