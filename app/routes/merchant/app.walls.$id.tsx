@@ -1,4 +1,4 @@
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigation, useSubmit, useSearchParams } from "@remix-run/react";
 import {
@@ -66,7 +66,7 @@ function checklistFrom(captureSpecs: string): string[] {
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, redirect } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop }, select: { id: true, brandName: true } });
   const brandName = shop?.brandName || session.shop.replace(".myshopify.com", "");
   const themeUrl = addToThemeUrl(session.shop, process.env.SHOPIFY_API_KEY || "");
@@ -108,7 +108,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session, admin, redirect } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop }, select: { id: true } });
   if (!shop) return json({ errors: ["Shop not found — reload the app."] }, { status: 400 });
 

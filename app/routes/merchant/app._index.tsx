@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import {
   Page,
@@ -33,7 +33,9 @@ const ROW_GAP = 4;
 const PLACEHOLDER_IMG = "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-product-1_small.png";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  // `redirect` from authenticate.admin keeps Shopify's embedded params (a plain
+  // redirect drops them, so a first open on a new store landed on /auth/login)
+  const { admin, session, redirect } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return redirect("/app/walls");
 

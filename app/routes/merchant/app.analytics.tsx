@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
 import * as React from "react";
 import {
@@ -26,7 +26,7 @@ import { RevenueChart, ShareChart, DIRECT_COLOR, INFLUENCED_COLOR } from "../../
 const RANGES = [7, 30, 90] as const;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, redirect } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop }, select: { id: true } });
   if (!shop) return redirect("/app");
 

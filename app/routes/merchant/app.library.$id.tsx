@@ -1,4 +1,4 @@
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
 import { extractKeyFromContentUrl, getPresignedDownloadUrl, deleteObject } from "../../utils/r2.server";
@@ -49,7 +49,7 @@ import { campaignRewardLabel } from "../../utils/rewards/presenters";
 import { parseProducts } from "../../utils/wall-campaigns";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, redirect } = await authenticate.admin(request);
 
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return redirect("/app");
