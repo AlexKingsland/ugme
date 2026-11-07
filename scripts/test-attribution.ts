@@ -256,6 +256,24 @@ async function main() {
   check("a pixel set up by the OTHER app (dev vs production) doesn't stop this app's", creates === createsBefore + 1 && pixelOn);
   check("…and the store now records this app", (await prisma.shop.findUnique({ where: { id: shop.id } }))?.pixelActivatedApp === (process.env.SHOPIFY_API_KEY || ""));
 
+  console.log("\nRetention (order records kept 60 days, daily totals forever)");
+  check("retention defaults to 60 days", srv.ORDER_RETENTION_DAYS === 60);
+  const oldDayIso = new Date(Date.now() - 70 * DAY * 1000).toISOString();
+  const tooOld = await srv.recordOrder(SHOP, { ...orderPayload, id: 5090, created_at: oldDayIso });
+  check("a (late, duplicate) webhook for an order older than 60 days is ignored", "skipped" in tooOld && tooOld.skipped === "too old", tooOld);
+  // An order that was recorded when it was new, now 70 days old
+  const oldDay = oldDayIso.slice(0, 10);
+  await prisma.wallOrder.create({ data: { shopId: shop.id, orderId: "5091", orderedAt: new Date(oldDayIso), day: oldDay, currency: "USD", revenueCents: 12300, lines: { create: [{ lineItemId: "91", productId: "9101", kind: "DIRECT", campaignId: camp.id, submissionId: post.id, quantity: 1, revenueCents: 12300 }] } } });
+  await prisma.wallDailyStat.create({ data: { shopId: shop.id, day: oldDay, currency: "USD", totalCents: 12300, directCents: 12300, directOrders: 1 } });
+  const ninetyBefore = await srv.getSalesSummary(shop.id, 90);
+  const pruned = await srv.pruneSalesData();
+  check("old order records are deleted (with their lines)", pruned.orders >= 1 && !(await prisma.wallOrder.findFirst({ where: { orderId: "5091" } })) && (await prisma.wallOrderLine.count({ where: { lineItemId: "91" } })) === 0, pruned);
+  check("recent orders are kept", !!(await prisma.wallOrder.findFirst({ where: { shopId: shop.id, orderId: "5001" } })));
+  const ninetyAfter = await srv.getSalesSummary(shop.id, 90);
+  check("charts still include the deleted order's revenue (daily totals kept)", ninetyAfter.totalCents === ninetyBefore.totalCents && ninetyAfter.directCents === ninetyBefore.directCents && ninetyBefore.directCents >= 12300, { before: ninetyBefore.totalCents, after: ninetyAfter.totalCents });
+  const lateRefund = await srv.recordRefund(SHOP, { id: 7091, order_id: 5091, refund_line_items: [] });
+  check("a refund for a deleted order is skipped safely", "skipped" in lateRefund, lateRefund);
+
   console.log("\nPlans follow Shopify billing (never set before the charge is approved)");
   const billing = await import("../app/utils/billing.server");
   check("subscription names map to plans", billing.planKeyFromSubscriptionName("Social Wall Standard") === "STARTER" && billing.planKeyFromSubscriptionName("Social Wall Pro") === "PRO");

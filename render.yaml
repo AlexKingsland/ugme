@@ -3,7 +3,7 @@
 #
 # Scaling later = change a plan below (or in the dashboard) and sync:
 #   web:      0.5c-512mb ($7) → 1c-2g ($25) → 2c-4g ($85) …   numInstances for more copies
-#   database: 0.1c-256mb ($6) → 0.5c-1g ($19) → 1c-2g ($40) …  storage grows separately
+#   database: 0.1c-256mb ($6) → 0.5c-1g ($19) → 1c-2g ($40) …  + storage (diskSizeGB) at $0.30/GB
 # Also raise FALLBACK_UPLOAD_MAX_MB / FALLBACK_UPLOAD_CONCURRENCY on a bigger server.
 
 services:
@@ -56,6 +56,9 @@ services:
       - key: COUNT_TEST_ORDERS
         value: "true"
       # Uploads that fall back through this server (networks that block R2)
+      # Order records for sales analytics are kept this many days (daily totals forever)
+      - key: ORDER_RETENTION_DAYS
+        value: "60"
       - key: FALLBACK_UPLOAD_MAX_MB
         value: "50"
       - key: FALLBACK_UPLOAD_CONCURRENCY
@@ -67,6 +70,9 @@ services:
 databases:
   - name: social-wall-db
     plan: 0.1c-256mb
+    # Storage is billed separately ($0.30/GB/mo). Without this Render defaults to 15 GB.
+    # 1 GB holds a lot (videos live in R2). Can be raised any time, never lowered.
+    diskSizeGB: 1
     region: virginia
     databaseName: socialwall
     user: socialwall

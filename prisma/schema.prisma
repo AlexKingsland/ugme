@@ -372,6 +372,7 @@ model WallPixelView {
   createdAt      DateTime        @default(now())
 
   @@unique([shopId, orderId])
+  @@index([createdAt]) // clean-up
 }
 
 model WallRefund {
@@ -381,6 +382,7 @@ model WallRefund {
   createdAt      DateTime        @default(now())
 
   @@unique([shopId, refundId])
+  @@index([createdAt]) // clean-up
 }
 
 enum AttributionKind {

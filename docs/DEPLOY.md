@@ -7,7 +7,7 @@ database, both defined in `render.yaml`. Media stays on Cloudflare R2 + the
 | Piece | Plan | ≈ Cost |
 |---|---|---|
 | Web service `social-wall` | `0.5c-512mb` (Starter) | $7/mo |
-| Postgres `social-wall-db` | `0.1c-256mb` | $6/mo |
+| Postgres `social-wall-db` | `0.1c-256mb` + 1 GB storage | $6.30/mo |
 | Workspace | Hobby | $0 |
 
 ---

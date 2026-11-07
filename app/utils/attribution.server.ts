@@ -18,8 +18,8 @@ import {
  * Scale: the dashboard never scans orders. Every write (order, pixel report, refund)
  * also bumps two small rollup tables — one row per shop per day, and one per post per
  * day it earned anything — so a 90-day report reads ≤ 90 rows regardless of order
- * volume. Order rows stay (refunds need them), but their full line list is only kept
- * for the few hours a checkout-pixel report can still arrive.
+ * volume. Order rows are kept ORDER_RETENTION_DAYS (refunds need them), and their full
+ * line list only for the few hours a checkout-pixel report can still arrive.
  */
 
 /** The checkout pixel must report within this long of the order being placed. */
@@ -122,18 +122,43 @@ function lineDeltas(lines: { kind: string; submissionId: string | null; campaign
 
 // ── Housekeeping (throttled, never blocks a webhook on failure) ──
 
+/**
+ * Order records are kept this long (refunds need them; most arrive within a few
+ * weeks). After that only the daily totals remain, so storage stays flat however
+ * many orders stores get. Set ORDER_RETENTION_DAYS to change it.
+ */
+export const ORDER_RETENTION_DAYS = Math.max(7, Number(process.env.ORDER_RETENTION_DAYS) || 60);
+const retentionCutoff = (now = Date.now()) => new Date(now - ORDER_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+/** Delete what's no longer needed. Daily totals (the charts) are never touched. */
+export async function pruneSalesData(now = Date.now()) {
+  const [lines, views, orders, refunds] = await Promise.all([
+    // the full line list is only needed while a pixel report can still arrive. Only
+    // look at the last week (this runs hourly, so older rows were cleared already;
+    // any missed ones go with the order at the retention cut-off).
+    prisma.wallOrder.updateMany({
+      where: { orderedAt: { gte: new Date(now - 7 * 24 * 60 * 60 * 1000), lt: new Date(now - PIXEL_REPORT_WINDOW_MS) }, linesJson: { not: "[]" } },
+      data: { linesJson: "[]" },
+    }),
+    // pixel reports for orders that never reached us (other apps' test checkouts, etc.)
+    prisma.wallPixelView.deleteMany({ where: { createdAt: { lt: new Date(now - PIXEL_VIEW_TTL_MS) } } }),
+    // old orders (their lines go with them); their revenue stays in the daily totals
+    prisma.wallOrder.deleteMany({ where: { orderedAt: { lt: retentionCutoff(now) } } }),
+    prisma.wallRefund.deleteMany({ where: { createdAt: { lt: retentionCutoff(now) } } }),
+  ]);
+  return { linesCleared: lines.count, pixelViews: views.count, orders: orders.count, refunds: refunds.count };
+}
+
+/**
+ * Not a scheduled job: it piggybacks on incoming order webhooks, at most once an
+ * hour per server, in the background (the webhook reply never waits for it).
+ * ~20 ms of indexed deletes even with hundreds of thousands of orders.
+ */
 let lastPrune = 0;
 function maybePrune() {
-  if (Date.now() - lastPrune < 10 * 60 * 1000) return;
+  if (Date.now() - lastPrune < 60 * 60 * 1000) return;
   lastPrune = Date.now();
-  const linesCutoff = new Date(Date.now() - PIXEL_REPORT_WINDOW_MS);
-  const viewsCutoff = new Date(Date.now() - PIXEL_VIEW_TTL_MS);
-  Promise.all([
-    // the full line list is only needed while a pixel report can still arrive
-    prisma.wallOrder.updateMany({ where: { orderedAt: { lt: linesCutoff }, linesJson: { not: "[]" } }, data: { linesJson: "[]" } }),
-    // pixel reports for orders that never reached us (other apps' test checkouts, etc.)
-    prisma.wallPixelView.deleteMany({ where: { createdAt: { lt: viewsCutoff } } }),
-  ]).catch((err) => console.warn("[sales] prune failed:", err));
+  pruneSalesData().catch((err) => console.warn("[sales] prune failed:", err));
 }
 
 // ── Webhooks ─────────────────────────────────────────────────────
@@ -150,6 +175,9 @@ export async function recordOrder(shopDomain: string, payload: unknown) {
     : null;
   const parsed = parseOrder(payload, pixel ? parseSeen(pixel.seen) : []);
   if (!parsed) return { skipped: "bad payload" as const };
+  // Older than we keep: its record may already be gone, so a late redelivery must not
+  // count it again. (Shopify stops retrying webhooks after 48 hours.)
+  if (parsed.orderedAt < retentionCutoff()) return { skipped: "too old" as const };
 
   const existing = await prisma.wallOrder.findUnique({
     where: { shopId_orderId: { shopId: shop.id, orderId: parsed.orderId } },
