@@ -32,7 +32,6 @@ api_version = "2026-10"
 redirect_urls = [ "https://social-wall.cloverkitstudio.com/api/auth" ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = false # production URLs never follow `shopify app dev`
 
 [app_proxy]
