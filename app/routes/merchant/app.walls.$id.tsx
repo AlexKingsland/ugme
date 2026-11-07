@@ -39,7 +39,7 @@ import type { RewardChoice } from "../../utils/wall-validate";
 
 const DEFAULTS: WallForm = {
   title: "",
-  moment: "Show us how you use it — unboxing, first impressions, or your favourite way to use it.",
+  moment: "",
   checklist: [],
   contentType: "VIDEO",
   productScope: "SPECIFIC",
@@ -490,6 +490,7 @@ export default function WallCampaignEditor() {
                   onChange={(v) => set("moment", v)}
                   multiline={3}
                   autoComplete="off"
+                  placeholder="Show us how you use it — unboxing, first impressions, or your favourite way to use it."
                   helpText="Shown to customers when they share, e.g. “Show us your morning routine with it.”"
                   maxLength={500}
                   showCharacterCount
