@@ -15,6 +15,9 @@ export type PixelStatus = "on" | "off" | "unknown";
 
 const SETTINGS = JSON.stringify({ proxyPath: PROXY_BASE });
 
+/** This app's client id (production and the dev app each have their own pixel). */
+const thisApp = () => process.env.SHOPIFY_API_KEY || "";
+
 /** Is the pixel connected on this store right now? */
 export async function pixelStatus(graphql: Graphql): Promise<PixelStatus> {
   try {
@@ -49,7 +52,7 @@ export async function activatePixel(graphql: Graphql, shopDomain: string): Promi
       console.warn(`[pixel] couldn't activate for ${shopDomain}:`, JSON.stringify(out?.userErrors || body?.errors));
       return false;
     }
-    await prisma.shop.update({ where: { shopDomain }, data: { pixelActivatedAt: new Date() } });
+    await prisma.shop.update({ where: { shopDomain }, data: { pixelActivatedAt: new Date(), pixelActivatedApp: thisApp() } });
     return true;
   } catch (err) {
     console.warn(`[pixel] couldn't activate for ${shopDomain}:`, err);
@@ -62,11 +65,13 @@ export async function activatePixel(graphql: Graphql, shopDomain: string): Promi
  * Records the activation if the pixel is already there (e.g. older installs).
  */
 export async function ensurePixelOnce(graphql: Graphql, shopDomain: string): Promise<void> {
-  const shop = await prisma.shop.findUnique({ where: { shopDomain }, select: { pixelActivatedAt: true } });
-  if (!shop || shop.pixelActivatedAt) return; // done before — respect whatever the merchant chose since
+  const shop = await prisma.shop.findUnique({ where: { shopDomain }, select: { pixelActivatedAt: true, pixelActivatedApp: true } });
+  if (!shop) return;
+  // Done before by THIS app — respect whatever the merchant chose since.
+  if (shop.pixelActivatedAt && shop.pixelActivatedApp === thisApp()) return;
   const status = await pixelStatus(graphql);
   if (status === "on") {
-    await prisma.shop.update({ where: { shopDomain }, data: { pixelActivatedAt: new Date() } });
+    await prisma.shop.update({ where: { shopDomain }, data: { pixelActivatedAt: new Date(), pixelActivatedApp: thisApp() } });
     return;
   }
   if (status === "off") await activatePixel(graphql, shopDomain);

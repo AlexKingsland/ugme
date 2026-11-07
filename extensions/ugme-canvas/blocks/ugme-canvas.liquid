@@ -11,7 +11,10 @@
   assign wall_status = wall.status.value
   assign proxy_base = '/apps/social-wall'
   assign store_handle = shop.permanent_domain | remove: '.myshopify.com'
-  assign admin_app = 'https://admin.shopify.com/store/' | append: store_handle | append: '/apps/79239f951610fa45ab1160d2fe4438f6/app'
+  # The app stores its client id on the installation, so admin links open the
+  # right app (production or the dev app). Falls back to the production app.
+  assign app_key = app.metafields.social_wall.api_key.value | default: '79239f951610fa45ab1160d2fe4438f6'
+  assign admin_app = 'https://admin.shopify.com/store/' | append: store_handle | append: '/apps/' | append: app_key | append: '/app'
   assign height = block.settings.height | append: 'vh'
   if block.settings.height_mobile
     assign height_mobile = block.settings.height_mobile | append: 'vh'

@@ -249,6 +249,12 @@ async function main() {
   const throwing = (async () => { throw Object.assign(new Error("GraphQL"), { body: { errors: [{ message: "No web pixel was found" }] } }); }) as any;
   check("not-found thrown by the admin client also reads as 'off'", (await px.pixelStatus(throwing)) === "off");
   check("other failures read as 'unknown' (no false alarm)", (await px.pixelStatus((async () => { throw new Error("network"); }) as any)) === "unknown");
+  await prisma.shop.update({ where: { id: shop.id }, data: { pixelActivatedApp: "another-app-client-id" } });
+  pixelOn = false;
+  const createsBefore = creates;
+  await px.ensurePixelOnce(gql, SHOP);
+  check("a pixel set up by the OTHER app (dev vs production) doesn't stop this app's", creates === createsBefore + 1 && pixelOn);
+  check("…and the store now records this app", (await prisma.shop.findUnique({ where: { id: shop.id } }))?.pixelActivatedApp === (process.env.SHOPIFY_API_KEY || ""));
 
   console.log("\nPlans follow Shopify billing (never set before the charge is approved)");
   const billing = await import("../app/utils/billing.server");

@@ -125,6 +125,7 @@ model Shop {
   brandName            String?
   logoUrl              String?
   pixelActivatedAt     DateTime?            // checkout pixel turned on by the app once; if it's gone later, the merchant removed it
+  pixelActivatedApp    String?              // which app (client id) turned it on — the dev app and production app each have their own pixel
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
 

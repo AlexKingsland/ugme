@@ -26,21 +26,29 @@ The app moved from SQLite to Postgres, so `shopify app dev` needs a database URL
 Tests use the same `DATABASE_URL` (each run makes and drops its own schema), or set
 `TEST_DATABASE_URL` to keep them on a separate database.
 
-## 1. Split dev and production into two Shopify apps
+## 1. Dev and production are two Shopify apps
 
-Today `shopify app dev` rewrites the app's URLs to your laptop. Before anyone else
-installs it, give dev its own app:
+| | Dev | Production |
+|---|---|---|
+| App | **Social Wall (dev)** (`2ba8e784…`) | **Social Wall** (`79239f95…`) |
+| Config | `shopify.app.dev.toml` (CLI default) | `shopify.app.toml` |
+| Runs | your laptop: `shopify app dev` | Render |
+| Ship | (automatic while `app dev` runs) | `shopify app deploy --config shopify.app.toml` |
 
-1. `shopify app config link` → **Create a new app** → name it `Social Wall (dev)` →
-   config name `dev`. This writes `shopify.app.dev.toml`.
-2. Ask Claude to fill `shopify.app.dev.toml` from `shopify.app.toml` (scopes, webhooks,
-   app proxy, metaobjects) and to turn off `automatically_update_urls_on_dev` in the
-   production config.
-3. From then on:
-   - develop: `shopify app dev --config dev`
-   - ship the production app: `shopify app deploy --config shopify.app.toml`
-4. Install `Social Wall (dev)` on your dev store (uninstall the production one there if
-   you want a clean split).
+Keep scopes / webhooks / app proxy / metaobjects the same in both files.
+
+**Moving your dev store onto the dev app (once):**
+1. Dev Dashboard → **Social Wall (dev)** → API access → Protected customer data →
+   same answers as production (App functionality + Analytics; fields Name + Email).
+   If it asks for a distribution method first, choose **Custom distribution** for your
+   dev store.
+2. Shopify admin of the dev store → Apps → uninstall **Social Wall** (production). Your
+   walls, posts and sales data stay in the database.
+3. `shopify app dev` → install **Social Wall (dev)** when prompted → open it once (it
+   recreates the theme-editor wall list and turns on its checkout pixel).
+4. Theme editor → re-add the **Social Wall** block and pick your walls.
+
+Don't install both apps on the same store: they share the `/apps/social-wall` proxy path.
 
 ## 2. Push to GitHub
 

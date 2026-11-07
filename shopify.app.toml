@@ -1,3 +1,4 @@
+# PRODUCTION app ("Social Wall") — deploy with: shopify app deploy --config shopify.app.toml
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "79239f951610fa45ab1160d2fe4438f6"
@@ -7,7 +8,7 @@ application_url = "https://social-wall.cloverkitstudio.com"
 embedded = true
 
 [access_scopes]
-scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions,write_pixels,read_customer_events"
+scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions,write_pixels,read_customer_events,write_app_proxy"
 
 [webhooks]
 api_version = "2026-10"
@@ -31,7 +32,8 @@ api_version = "2026-10"
 redirect_urls = [ "https://social-wall.cloverkitstudio.com/api/auth" ]
 
 [build]
-automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+automatically_update_urls_on_dev = false # production URLs never follow `shopify app dev`
 
 [app_proxy]
 url = "https://social-wall.cloverkitstudio.com/api/proxy"

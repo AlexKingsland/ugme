@@ -27,7 +27,7 @@ services:
       - key: SHOPIFY_APP_URL
         value: https://social-wall.cloverkitstudio.com
       - key: SCOPES
-        value: read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions,write_pixels,read_customer_events
+        value: read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions,write_pixels,read_customer_events,write_app_proxy
       # From the Dev Dashboard → Social Wall → Settings (Client ID / Client secret)
       - key: SHOPIFY_API_KEY
         sync: false

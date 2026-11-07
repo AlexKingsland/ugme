@@ -1,0 +1,71 @@
+# DEV app ("Social Wall (dev)") — used by `shopify app dev`. Production: shopify.app.toml.
+# Keep scopes / webhooks / app_proxy / metaobjects in sync with shopify.app.toml.
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "2ba8e784637a603cdcf5452050300d9a"
+name = "Social Wall (dev)"
+application_url = "https://example.com" # set by `shopify app dev`
+embedded = true
+
+[access_scopes]
+scopes = "read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions,write_pixels,read_customer_events,write_app_proxy"
+
+[webhooks]
+api_version = "2026-10"
+
+  # Sales attribution — every order (for % of revenue) + lines the wall drove.
+  # Needs protected customer data access (Dev Dashboard → API access).
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders/create"
+
+  [[webhooks.subscriptions]]
+  topics = [ "refunds/create" ]
+  uri = "/webhooks/refunds/create"
+
+  # Plan changes (approved / cancelled / frozen) — Shopify billing is the source of truth
+  [[webhooks.subscriptions]]
+  topics = [ "app_subscriptions/update" ]
+  uri = "/webhooks/app/subscriptions_update"
+
+[auth]
+redirect_urls = [ "https://example.com/api/auth" ]
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true
+
+[app_proxy]
+url = "https://example.com/api/proxy"
+subpath = "social-wall"
+prefix = "apps"
+
+# ── Social Wall ──────────────────────────────────────────────────
+# App-owned metaobject mirroring each wall campaign, so merchants can pick one
+# in the "Social Wall" theme block. Entries are written by
+# app/utils/canvas.server.ts (syncCampaignMetaobjects). `status` lets the block
+# hide itself unless the wall campaign is ACTIVE.
+[metaobjects.app.ugme_campaign]
+name = "Wall campaign"
+description = "A Social Wall campaign, selectable in the Social Wall theme block"
+display_name_field = "title"
+access.admin = "merchant_read"
+access.storefront = "public_read"
+
+[metaobjects.app.ugme_campaign.fields.title]
+name = "Title"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.ugme_campaign.fields.campaign_id]
+name = "Campaign ID"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.ugme_campaign.fields.status]
+name = "Status"
+type = "single_line_text_field"
+
+[metaobjects.app.ugme_campaign.fields.data_url]
+name = "Data URL"
+type = "single_line_text_field"

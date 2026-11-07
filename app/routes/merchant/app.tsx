@@ -10,6 +10,7 @@ import prisma from "../../db.server";
 import { maybeSyncCampaignMetaobjects } from "../../utils/canvas.server";
 import { maybeEnsurePixelOnce } from "../../utils/web-pixel.server";
 import { maybeSyncPlan } from "../../utils/billing.server";
+import { maybeSyncInstallationMetafields } from "../../utils/app-installation.server";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -33,6 +34,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   maybeEnsurePixelOnce(admin.graphql, session.shop);
   // Keep the stored plan in step with Shopify billing (throttled)
   maybeSyncPlan(admin.graphql, session.shop);
+  // Lets the theme block link to this app (dev vs production)
+  maybeSyncInstallationMetafields(admin.graphql, session.shop);
 
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
