@@ -234,7 +234,10 @@ export default function Dashboard() {
           } else if (approvalPct >= 80) {
             banners.push({ key: "approvals", tone: "warning", title: "You're close to this month's approval limit", body: `${submissions.monthlyCount} of ${approvalLimit} approvals used. Customers can keep submitting — you just can't approve beyond the limit.` });
           }
-          if (storagePct >= 95) {
+          const storageFull = storage.plan.storageBytes !== Infinity && storage.usedBytes >= storage.plan.storageBytes;
+          if (storageFull) {
+            banners.push({ key: "storage", tone: "critical", title: "You're out of storage", body: `${formatBytes(storage.usedBytes)} of ${storage.plan.storageLabel} used. Customers can't upload new photos or videos until you upgrade or delete submissions you don't need.` });
+          } else if (storagePct >= 95) {
             banners.push({ key: "storage", tone: "critical", title: "You're almost out of storage", body: `${formatBytes(storage.usedBytes)} of ${storage.plan.storageLabel} used. Customers can't upload once storage is full.` });
           } else if (storagePct >= 80) {
             banners.push({ key: "storage", tone: "warning", title: "Storage is getting full", body: `${formatBytes(storage.usedBytes)} of ${storage.plan.storageLabel} used.` });

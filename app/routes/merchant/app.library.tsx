@@ -379,6 +379,11 @@ export default function Library() {
             You've approved {approvals.used} of {approvals.limit} submissions this month. Pending submissions stay safe here — upgrade to approve more, or they can be approved next month.
           </Banner>
         )}
+        {planInfo.storageBytes !== Infinity && storage.usedBytes >= planInfo.storageBytes && (
+          <Banner tone="critical" title="You're out of storage" action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
+            Customers can't upload new photos or videos until you upgrade or delete submissions you don't need.
+          </Banner>
+        )}
         {/* Tab bar + storage */}
         <Card>
           <BlockStack gap="300">

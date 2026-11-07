@@ -30,3 +30,6 @@ pnpm-lock.yaml
 
 # Local email previews (written when RESEND_API_KEY is not set)
 .email-previews/
+
+# Generated per app by scripts/block-app-id.mjs (template: scripts/templates/ugme-canvas.block.liquid)
+/extensions/ugme-canvas/blocks/ugme-canvas.liquid

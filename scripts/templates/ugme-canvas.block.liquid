@@ -1,4 +1,10 @@
 {%- comment -%}
+  TEMPLATE — edit THIS file, not extensions/ugme-canvas/blocks/ugme-canvas.liquid.
+  `npm run dev` / `npm run deploy` / `npm run deploy:prod` write the block from it with
+  the right app's numeric id (Shopify needs app--<id>--ugme_campaign; `$app:` isn't
+  supported in theme block settings).
+{%- endcomment -%}
+{%- comment -%}
   Social Wall — an infinite, explorable 3D wall of content from verified buyers.
   Each block shows ONE wall campaign (picked in the block settings). Wall
   campaigns are app-owned metaobjects synced by the app; the block renders
@@ -99,7 +105,7 @@
       "type": "metaobject",
       "id": "wall_campaign",
       "label": "Wall campaign",
-      "metaobject_type": "app--425610215425--ugme_campaign",
+      "metaobject_type": "app--__APP_ID__--ugme_campaign",
       "info": "Create and activate wall campaigns in the Social Wall app. The block stays hidden until its wall campaign is active."
     },
     {
