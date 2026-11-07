@@ -3,8 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  // Postgres everywhere: Render in production, a free Neon (or local) database in dev.
+  // DIRECT_URL is optional — only needed if DATABASE_URL goes through a pooler.
+  url      = env("DATABASE_URL")
 }
 
 // Shopify session storage (required by @shopify/shopify-app-session-storage-prisma)
@@ -58,6 +60,7 @@ enum SubmissionStatus {
 enum ContentType {
   PHOTO
   VIDEO
+  ANY // wall campaigns only: photos or videos. A submission is always PHOTO or VIDEO (from its file).
 }
 
 enum DiscountType {

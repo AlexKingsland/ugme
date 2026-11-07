@@ -9,12 +9,16 @@ node_modules
 /app/public/build
 /prisma/dev.sqlite
 /prisma/dev.sqlite-journal
+/prisma/dev.sqlite.backup*
+# One-time SQLite → Postgres copy: contains store tokens + customer emails
+/prisma/sqlite-export.sql
 database.sqlite
 
 .env
 .env.*
+!.env.example
 
-package-lock.json
+# package-lock.json IS committed — Render builds from it (npm ci)
 yarn.lock
 pnpm-lock.yaml
 

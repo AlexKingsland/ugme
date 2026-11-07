@@ -9,17 +9,10 @@
  *   • server-side verification (post must belong to the shop and link the product)
  *   • idempotent webhooks, refunds, and the dashboard summary
  */
-import { copyFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { isolatedDatabase } from "./test-db";
 
-const dir = mkdtempSync(join(tmpdir(), "social-wall-sales-"));
-const dbFile = join(dir, "test.sqlite");
-copyFileSync(resolve("prisma/dev.sqlite"), dbFile);
-process.env.DATABASE_URL = `file:${dbFile}`;
-const prisma = new PrismaClient({ datasources: { db: { url: `file:${dbFile}` } } });
-(globalThis as any).prismaGlobal = prisma;
+const testDb = isolatedDatabase("sales");
+const prisma = testDb.prisma;
 
 let passed = 0;
 let failed = 0;
@@ -281,12 +274,12 @@ async function main() {
   check("hand-assigned Enterprise isn't reset to Free", (await billing.syncPlanFromShopify(subsGql, SHOP)) === "ENTERPRISE");
 
   console.log(`\n${passed} passed, ${failed} failed`);
-  await prisma.$disconnect();
+  await testDb.cleanup();
   process.exit(failed ? 1 : 0);
 }
 
 main().catch(async (err) => {
   console.error(err);
-  await prisma.$disconnect();
+  await testDb.cleanup();
   process.exit(1);
 });

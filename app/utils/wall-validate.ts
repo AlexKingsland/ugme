@@ -7,7 +7,7 @@ export type WallForm = {
   title: string;
   moment: string;
   checklist: string[];
-  contentType: "VIDEO" | "PHOTO";
+  contentType: "VIDEO" | "PHOTO" | "ANY";
   productScope: "SPECIFIC" | "ALL";
   products: WallProduct[];
   rewardType: RewardChoice;

@@ -75,7 +75,7 @@ export async function sendRewardDeliveredEmail(submissionId: string): Promise<No
       shopDomain: shop.shopDomain,
       customerEmail: sub.customer.email,
       campaignTitle: c.title,
-      contentType: sub.contentType,
+      contentType: sub.contentType === "VIDEO" ? "VIDEO" : "PHOTO", // a submission is never ANY
       productTitle: parseProducts(sub.products)[0]?.title ?? c.productTitle,
       reward,
     });

@@ -1,0 +1,74 @@
+# Render Blueprint — Social Wall production.
+# Render → New → Blueprint → pick this repo. It creates the web service + database.
+#
+# Scaling later = change a plan below (or in the dashboard) and sync:
+#   web:      0.5c-512mb ($7) → 1c-2g ($25) → 2c-4g ($85) …   numInstances for more copies
+#   database: 0.1c-256mb ($6) → 0.5c-1g ($19) → 1c-2g ($40) …  storage grows separately
+# Also raise FALLBACK_UPLOAD_MAX_MB / FALLBACK_UPLOAD_CONCURRENCY on a bigger server.
+
+services:
+  - type: web
+    name: social-wall
+    runtime: docker
+    plan: 0.5c-512mb
+    region: virginia
+    numInstances: 1
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    domains:
+      - social-wall.cloverkitstudio.com
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: social-wall-db
+          property: connectionString
+      - key: SHOPIFY_APP_URL
+        value: https://social-wall.cloverkitstudio.com
+      - key: SCOPES
+        value: read_customers,read_orders,read_products,read_themes,write_metaobjects,write_metaobject_definitions,write_discounts,read_store_credit_accounts,write_store_credit_account_transactions,write_pixels,read_customer_events
+      # From the Dev Dashboard → Social Wall → Settings (Client ID / Client secret)
+      - key: SHOPIFY_API_KEY
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      # Cloudflare R2 (use a production bucket + an API token scoped to it)
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: MEDIA_PUBLIC_BASE_URL
+        value: https://media.cloverkitstudio.com
+      # Email (Resend)
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Beta on development stores: test charges + count test orders in analytics.
+      # Set both to "false" before real merchants install from the App Store.
+      - key: BILLING_TEST
+        value: "true"
+      - key: COUNT_TEST_ORDERS
+        value: "true"
+      # Uploads that fall back through this server (networks that block R2)
+      - key: FALLBACK_UPLOAD_MAX_MB
+        value: "50"
+      - key: FALLBACK_UPLOAD_CONCURRENCY
+        value: "2"
+      # Optional: "store.myshopify.com:you@example.com,…" may post more than once per wall
+      - key: TEST_SUBMITTERS
+        sync: false
+
+databases:
+  - name: social-wall-db
+    plan: 0.1c-256mb
+    region: virginia
+    databaseName: socialwall
+    user: socialwall
+    postgresMajorVersion: "17"
+    ipAllowList: [] # private: only the web service can connect

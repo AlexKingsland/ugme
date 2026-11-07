@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { buildObjectKey, uploadToR2, deleteObject, extractKeyFromContentUrl, getPresignedDownloadUrl, getPresignedUploadUrl, headObject, posterKeyFor, createMultipartUpload, getPresignedPartUrl, completeMultipartUpload, abortMultipartUpload } from "../utils/r2.server";
 import { unauthenticated } from "../shopify.server";
 import { liveOnlineStoreProducts } from "../utils/product-availability.server";
+import { contentWord, fileTypeAllowed, submissionTypeFor } from "../utils/wall-campaigns";
 import { parseProducts, verifyBuyer, wallRewardOffer, hasReward, type BuyerCheck, type ProductScope } from "../utils/wall-campaigns.server";
 import { checkPlanGates, type PlanTierKey } from "../utils/plans.server";
 import { canvasJsonResponse } from "../utils/canvas.server";
@@ -634,11 +635,11 @@ async function handleCampaignDetail(campaignId: string, shop: ShopInfo, brandNam
     ${statsHtml}
 
     <a href="${PROXY_BASE}/campaign/${campaign.id}/submit?shop=${shop.shopDomain}" class="ugme-btn ugme-btn--primary">
-      Share your ${campaign.contentType === "VIDEO" ? "video" : "photo"}
+      Share your ${contentWord(campaign.contentType)}
     </a>
 
     <p style="font-size: 12px; color: var(--ugme-muted); margin-top: 16px; line-height: 1.5;">
-      For verified buyers of ${escapeHtml(productNames(campaign))}. Approved ${campaign.contentType === "VIDEO" ? "videos" : "photos"} appear on the wall with a Verified buyer badge${hasReward(campaign) ? ` and earn ${escapeHtml(reward)}` : ""}.
+      For verified buyers of ${escapeHtml(productNames(campaign))}. Approved ${contentWord(campaign.contentType, true)} appear on the wall with a Verified buyer badge${hasReward(campaign) ? ` and earn ${escapeHtml(reward)}` : ""}.
     </p>
   `;
 
@@ -730,7 +731,8 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
   const requirements = specs.filter((s) => s.label === "Requirement");
   const reward = rewardText(campaign);
   const isVideo = campaign.contentType === "VIDEO";
-  const mediaWord = isVideo ? "video" : "photo";
+  const isPhoto = campaign.contentType === "PHOTO";
+  const mediaWord = contentWord(campaign.contentType);
 
   // Error banner for upload failures
   const errorParam = url.searchParams.get("error");
@@ -739,6 +741,8 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
     const errorMsgs: Record<string, string> = {
       no_file: "Please select a file to upload.",
       too_large: "File is too large. Maximum size is 1 GB.",
+      fallback_too_large: `Your network blocked our upload service, and this file is too big for the backup route (max ${LEGACY_MAX_UPLOAD_MB} MB). Try another network, or a shorter ${mediaWord}.`,
+      busy: "We\u2019re handling a lot of uploads right now. Please try again in a minute.",
       upload_failed: "Upload failed. Please try again.",
       plan_limit: "This store can\u2019t accept new videos right now. Please try again later.",
     };
@@ -770,14 +774,15 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
           Tap to choose your ${mediaWord}
         </div>
         <div id="uploadHint" style="color: var(--ugme-muted); font-size: 13px;">
-          ${isVideo ? "MP4 or MOV, max 1 GB" : "JPG or PNG, max 1 GB"}
+          ${isVideo ? "MP4 or MOV, max 1 GB" : isPhoto ? "JPG or PNG, max 1 GB" : "Photo (JPG, PNG) or video (MP4, MOV), max 1 GB"}
         </div>
-        <input type="file" id="fileInput" name="file" accept="${isVideo ? "video/mp4,video/quicktime,video/*" : "image/jpeg,image/png,image/*"}" style="display: none;" required />
+        <input type="file" id="fileInput" name="file" accept="${isVideo ? "video/mp4,video/quicktime,video/*" : isPhoto ? "image/jpeg,image/png,image/*" : "video/mp4,video/quicktime,video/*,image/jpeg,image/png,image/*"}" style="display: none;" required />
       </div>
 
       <!-- File preview (hidden until file selected) -->
       <div id="filePreview" style="display: none; margin-bottom: 20px; border-radius: var(--ugme-radius); overflow: hidden; background: var(--ugme-surface);">
-        ${isVideo ? '<video id="previewMedia" style="width: 100%; max-height: 300px; object-fit: contain; background: #000;" controls></video>' : '<img id="previewMedia" style="width: 100%; max-height: 300px; object-fit: contain;" alt="Preview" />'}
+        <video id="previewVideo" style="display: none; width: 100%; max-height: 300px; object-fit: contain; background: #000;" controls playsinline></video>
+        <img id="previewImage" style="display: none; width: 100%; max-height: 300px; object-fit: contain;" alt="Preview" />
         <div style="padding: 12px; display: flex; align-items: center; justify-content: space-between;">
           <div>
             <div id="fileName" style="font-weight: 600; font-size: 14px;"></div>
@@ -881,7 +886,8 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       const fileInput = document.getElementById('fileInput');
       const uploadArea = document.getElementById('uploadArea');
       const filePreview = document.getElementById('filePreview');
-      const previewMedia = document.getElementById('previewMedia');
+      const previewVideo = document.getElementById('previewVideo');
+      const previewImage = document.getElementById('previewImage');
       const fileName = document.getElementById('fileName');
       const fileSize = document.getElementById('fileSize');
       const removeFile = document.getElementById('removeFile');
@@ -913,8 +919,12 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         fileName.textContent = file.name;
         fileSize.textContent = formatBytes(file.size);
 
+        // The preview matches the file (walls can take photos or videos)
         const url = URL.createObjectURL(file);
-        previewMedia.src = url;
+        const asVideo = file.type.indexOf('video') === 0;
+        previewVideo.style.display = asVideo ? 'block' : 'none';
+        previewImage.style.display = asVideo ? 'none' : 'block';
+        (asVideo ? previewVideo : previewImage).src = url;
 
         updateSubmitState();
       });
@@ -923,7 +933,9 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         fileInput.value = '';
         uploadArea.style.display = 'block';
         filePreview.style.display = 'none';
-        previewMedia.src = '';
+        previewVideo.removeAttribute('src'); previewVideo.load();
+        previewImage.removeAttribute('src');
+        previewVideo.style.display = 'none'; previewImage.style.display = 'none';
         updateSubmitState();
       });
 
@@ -1037,7 +1049,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       }
 
       const MAX_BYTES = 1024 * 1024 * 1024; // 1 GB
-      const LEGACY_MAX_BYTES = 100 * 1024 * 1024; // old proxy path limit
+      const LEGACY_MAX_BYTES = ${LEGACY_MAX_UPLOAD_BYTES}; // fallback (through the app) limit
 
       // Single PUT of a Blob with progress. Resolves with the response ETag.
       function putBlob(url, blob, contentType, onProgress, register) {
@@ -1279,7 +1291,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
         } catch (err) {
           // Storage couldn't be reached or kept dropping the connection — often antivirus
           // "web protection" or a network filter blocking cloud-storage uploads. Send the
-          // file through the store's own address instead (files up to 100 MB).
+          // file through the store's own address instead (up to the fallback limit).
           if (file.size <= LEGACY_MAX_BYTES && !(err && err.status === -1)) {
             showProgress('Trying another way…', null, 0, 0, '');
             return nativeFallback();
@@ -1357,10 +1369,15 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
 
 // ── C9 POST: Process submission ─────────────────────────────────
 
-// Direct-to-R2 uploads (browser → R2) handle up to 1 GB. The legacy multipart
-// path streams through the app proxy and buffers in memory, so it stays at 100 MB.
+// Direct-to-R2 uploads (browser → R2) handle up to 1 GB. The fallback path (when a
+// shopper's network blocks R2) sends the file through this server, which holds it in
+// memory — so it's capped by size and by how many run at once. Raise both with
+// FALLBACK_UPLOAD_MAX_MB / FALLBACK_UPLOAD_CONCURRENCY on a bigger server.
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024; // 1 GB
-const LEGACY_MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
+const LEGACY_MAX_UPLOAD_MB = Math.max(1, Number(process.env.FALLBACK_UPLOAD_MAX_MB) || 50);
+const LEGACY_MAX_UPLOAD_BYTES = LEGACY_MAX_UPLOAD_MB * 1024 * 1024;
+const FALLBACK_CONCURRENCY = Math.max(1, Number(process.env.FALLBACK_UPLOAD_CONCURRENCY) || 2);
+let fallbackUploadsInFlight = 0;
 /** Public caption shown on the wall with the post */
 const CAPTION_MAX = 300;
 const MULTIPART_THRESHOLD = 16 * 1024 * 1024; // files above this upload in parts (each part retries on its own)
@@ -1399,6 +1416,28 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
   const left = await spotsLeft(campaign);
   if (left !== null && left <= 0) return errorRedirect(shop.shopDomain, campaignId, "full");
 
+  // Refuse oversized bodies BEFORE reading them into memory, and limit how many
+  // fallback uploads this server holds at once.
+  const declared = Number(request.headers.get("content-length") || 0);
+  if (declared > LEGACY_MAX_UPLOAD_BYTES + 1024 * 1024) return errorRedirect(shop.shopDomain, campaignId, "fallback_too_large");
+  if (fallbackUploadsInFlight >= FALLBACK_CONCURRENCY) return errorRedirect(shop.shopDomain, campaignId, "busy");
+  fallbackUploadsInFlight++;
+  try {
+    return await receiveFallbackUpload(campaignId, campaign, customer, buyer, shop, loggedInCustomerId, request);
+  } finally {
+    fallbackUploadsInFlight--;
+  }
+}
+
+async function receiveFallbackUpload(
+  campaignId: string,
+  campaign: { id: string; title: string; contentType: string },
+  customer: Awaited<ReturnType<typeof findOrCreateCustomer>>,
+  buyer: Extract<Awaited<ReturnType<typeof checkWallBuyer>>, { status: "eligible" }>,
+  shop: ShopInfo,
+  loggedInCustomerId: string,
+  request: Request,
+) {
   // Parse the multipart form data
   let description = "";
   let showName = false;
@@ -1429,7 +1468,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
   }
 
   if (file.size > LEGACY_MAX_UPLOAD_BYTES) {
-    return errorRedirect(shop.shopDomain, campaignId, "too_large");
+    return errorRedirect(shop.shopDomain, campaignId, "fallback_too_large");
   }
 
   // Create the submission first (so we have an ID for the object key)
@@ -1437,7 +1476,7 @@ async function handleSubmitAction(campaignId: string, shop: ShopInfo, brandName:
     data: {
       campaignId,
       customerId: customer.id,
-      contentType: campaign.contentType,
+      contentType: submissionTypeFor(campaign.contentType, file.type),
       contentUrl: "r2://pending", // temporary, updated after upload
       fileBytes: file.size,
       description: description.trim().slice(0, CAPTION_MAX) || null,
@@ -1580,8 +1619,7 @@ async function handleUploadUrl(campaignId: string, shop: ShopInfo, loggedInCusto
   const pre = await preflightSubmission(campaignId, shop, loggedInCustomerId);
   if (!pre.ok) return pre.response;
 
-  const wantVideo = pre.campaign.contentType === "VIDEO";
-  if (fileType && !fileType.startsWith(wantVideo ? "video/" : "image/")) return uploadError("wrong_type", 415);
+  if (!fileTypeAllowed(pre.campaign.contentType, fileType)) return uploadError("wrong_type", 415);
 
   try {
     const gates = await checkPlanGates(shop.id, (shop.planTier as PlanTierKey) || "FREE", fileSize);
@@ -1686,7 +1724,7 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
     data: {
       campaignId,
       customerId: pre.customer.id,
-      contentType: pre.campaign.contentType,
+      contentType: submissionTypeFor(pre.campaign.contentType, head?.contentType),
       contentUrl: `r2://${key}`,
       thumbnailUrl,
       durationSecs,
@@ -1736,7 +1774,6 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
   });
 
   const reward = campaign ? rewardText(campaign) : "your reward";
-  const mediaWord = campaign?.contentType === "VIDEO" ? "video" : "photo";
 
   // Show the customer's real status — this page is also where they land when
   // they open the share link again after already posting.
@@ -1748,6 +1785,8 @@ async function handleSubmitted(campaignId: string, shop: ShopInfo, brandName: st
         include: { reward: true },
       })
     : null;
+  // What they shared (photo-or-video walls) or what the wall asks for
+  const mediaWord = mine ? (mine.contentType === "VIDEO" ? "video" : "photo") : contentWord(campaign?.contentType || "ANY");
 
   if (mine && mine.status === "APPROVED" && campaign) {
     const r = mine.reward;

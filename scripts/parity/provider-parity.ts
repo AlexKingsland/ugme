@@ -18,11 +18,11 @@
  * When behaviour changes ON PURPOSE, re-record the snapshot:
  *   npm run test:providers -- --update
  */
-import { copyFileSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { PrismaClient } from "@prisma/client";
+import { isolatedDatabase } from "../test-db";
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -41,13 +41,11 @@ const out = (s: string) => process.stdout.write(s);
 
 // ── isolated database ───────────────────────────────────────────
 const dir = mkdtempSync(join(tmpdir(), "ugme-parity-"));
-const dbFile = join(dir, "parity.sqlite");
-copyFileSync(resolve("prisma/dev.sqlite"), dbFile);
-const prisma = new PrismaClient({ datasources: { db: { url: `file:${dbFile}` } } });
+const testDb = isolatedDatabase("parity");
+const prisma = testDb.prisma;
 // Emails: always preview mode, written to the temp dir (never really sent)
 delete process.env.RESEND_API_KEY;
 process.env.EMAIL_PREVIEW_DIR = join(dir, "emails");
-(globalThis as any).prismaGlobal = prisma;
 
 // ── mocked provider APIs ────────────────────────────────────────
 type Call = { method: string; path: string; token?: string | null; body?: unknown };
@@ -420,7 +418,7 @@ await scenario("plans/not-connected", async () => {
   await prisma.shop.update({ where: { id: SHOP_N }, data: { providerConnected: false } });
 }, () => hasPlans(SHOP_N, "gid://shopify/Product/4242"));
 
-await prisma.$disconnect();
+await testDb.cleanup();
 const json = JSON.stringify(record, null, 2) + "\n";
 const compareWith = arg("compare");
 if (!compareWith) {

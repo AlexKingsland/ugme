@@ -26,8 +26,11 @@ import {
 const PIXEL_REPORT_WINDOW_MS = 6 * 60 * 60 * 1000;
 const PIXEL_VIEW_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Test orders count in development (dev stores only take test orders), never in production. */
-export const COUNT_TEST_ORDERS = process.env.NODE_ENV !== "production";
+/**
+ * Test orders count in development, and in production while COUNT_TEST_ORDERS=true
+ * (beta on development stores, which only take test orders). Off for real merchants.
+ */
+export const COUNT_TEST_ORDERS = process.env.NODE_ENV !== "production" || process.env.COUNT_TEST_ORDERS === "true";
 
 type Tx = Prisma.TransactionClient;
 type PostInfo = { campaignId: string; productIds: Set<string> };

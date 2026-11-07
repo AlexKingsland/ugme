@@ -26,6 +26,7 @@
     "rewards:retry": "node --env-file=.env --import tsx scripts/retry-rewards.ts",
     "media:publish": "node --env-file=.env --import tsx scripts/publish-public-media.ts",
     "sales:rebuild": "node --env-file=.env --import tsx scripts/rebuild-sales-stats.ts",
+    "db:verify-import": "node --env-file=.env --import tsx scripts/verify-import.ts",
     "test:sales": "node --env-file=.env --import tsx scripts/test-attribution.ts",
     "test:wall": "node --env-file=.env --import tsx scripts/test-social-wall.ts",
     "test:emails": "node --import tsx scripts/check-email-templates.ts",

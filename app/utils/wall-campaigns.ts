@@ -98,3 +98,26 @@ export function wallRewardOffer(c: WallRewardFields, currency = "USD"): string {
 export function hasReward(c: { rewardType: string }) {
   return c.rewardType === "DISCOUNT_CODE" || c.rewardType === "STORE_CREDIT";
 }
+
+
+/** What a wall campaign asks for, in words: "video" / "photo" / "photo or video". */
+export function contentWord(contentType: string, plural = false): string {
+  if (contentType === "VIDEO") return plural ? "videos" : "video";
+  if (contentType === "PHOTO") return plural ? "photos" : "photo";
+  return plural ? "photos or videos" : "photo or video";
+}
+
+/** A submission's type comes from its file on "photos or videos" walls. */
+export function submissionTypeFor(campaignType: string, mimeType: string | null | undefined): "PHOTO" | "VIDEO" {
+  if (campaignType === "VIDEO" || campaignType === "PHOTO") return campaignType;
+  return String(mimeType || "").startsWith("video/") ? "VIDEO" : "PHOTO";
+}
+
+/** Does this file type fit what the wall asks for? (Empty types are checked later.) */
+export function fileTypeAllowed(campaignType: string, mimeType: string | null | undefined): boolean {
+  const t = String(mimeType || "");
+  if (!t) return true;
+  if (campaignType === "VIDEO") return t.startsWith("video/");
+  if (campaignType === "PHOTO") return t.startsWith("image/");
+  return t.startsWith("video/") || t.startsWith("image/");
+}

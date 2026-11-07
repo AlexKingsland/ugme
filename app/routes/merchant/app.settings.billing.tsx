@@ -138,7 +138,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             },
           ],
           returnUrl: `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}/app/settings/billing?charge_activated=true&plan=${targetPlan}`,
-          test: process.env.NODE_ENV !== "production",
+          // Test charges in dev, and in production while BILLING_TEST=true (beta on
+          // development stores, which can only take test charges)
+          test: process.env.NODE_ENV !== "production" || process.env.BILLING_TEST === "true",
         },
       },
     );

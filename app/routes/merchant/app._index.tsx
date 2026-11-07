@@ -90,7 +90,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         email: s.customer.email,
         wall: s.campaign.title,
         products: parseProducts(s.products).map((p) => p.title).join(", "),
-        contentType: s.thumbnailUrl ? "PHOTO" : s.contentType,
+        contentType: (s.thumbnailUrl || s.contentType !== "VIDEO" ? "PHOTO" : "VIDEO") as "PHOTO" | "VIDEO",
         contentUrl: url,
         durationSecs: s.durationSecs,
         createdAt: s.createdAt,

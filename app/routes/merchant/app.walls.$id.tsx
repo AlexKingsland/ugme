@@ -479,6 +479,7 @@ export default function WallCampaignEditor() {
                   options={[
                     { label: "Videos", value: "VIDEO" },
                     { label: "Photos", value: "PHOTO" },
+                    { label: "Photos or videos", value: "ANY" },
                   ]}
                   value={f.contentType}
                   onChange={(v) => set("contentType", v as WallForm["contentType"])}
@@ -668,7 +669,7 @@ export default function WallCampaignEditor() {
                 </ReviewRow>
                 <ReviewRow label="Asking for" onEdit={() => goTo(0)}>
                   <BlockStack gap="100">
-                    <Text as="p">{f.contentType === "VIDEO" ? "Videos" : "Photos"}: {f.moment || "—"}</Text>
+                    <Text as="p">{f.contentType === "VIDEO" ? "Videos" : f.contentType === "PHOTO" ? "Photos" : "Photos or videos"}: {f.moment || "—"}</Text>
                     {f.checklist.map((c, i) => (
                       <Text as="p" key={i} tone="subdued" variant="bodySm">• {c}</Text>
                     ))}

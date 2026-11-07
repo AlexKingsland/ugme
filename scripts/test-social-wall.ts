@@ -11,11 +11,11 @@
  *   • approval → reward fulfilment for NONE / DISCOUNT_CODE / STORE_CREDIT
  *   • the wall's JSON (products, Verified buyer, names, paused walls hidden)
  */
-import { copyFileSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import crypto from "node:crypto";
-import { PrismaClient } from "@prisma/client";
+import { isolatedDatabase } from "./test-db";
 
 // ── environment (before importing app code) ─────────────────────
 process.env.SHOPIFY_API_KEY ||= "test-api-key";
@@ -26,11 +26,8 @@ process.env.RESEND_API_KEY = ""; // preview mode — never send real email from 
 
 const dir = mkdtempSync(join(tmpdir(), "social-wall-test-"));
 process.env.EMAIL_PREVIEW_DIR = join(dir, "emails");
-const dbFile = join(dir, "test.sqlite");
-copyFileSync(resolve("prisma/dev.sqlite"), dbFile);
-process.env.DATABASE_URL = `file:${dbFile}`;
-const prisma = new PrismaClient({ datasources: { db: { url: `file:${dbFile}` } } });
-(globalThis as any).prismaGlobal = prisma;
+const testDb = isolatedDatabase("wall");
+const prisma = testDb.prisma;
 
 const SHOP = "initialteststore-2.myshopify.com";
 const P1 = { id: "gid://shopify/Product/9001", title: "Test Board", handle: "test-board", imageUrl: "https://cdn.example/board.jpg" };
@@ -180,8 +177,7 @@ section("Buyer check against the (mocked) Admin API");
 }
 
 // ── 2. customer pages through the proxy route ───────────────────
-const shopRow = await prisma.shop.findUnique({ where: { shopDomain: SHOP } });
-if (!shopRow) throw new Error(`Test needs the dev shop ${SHOP} in prisma/dev.sqlite`);
+const shopRow = await prisma.shop.upsert({ where: { shopDomain: SHOP }, update: {}, create: { shopDomain: SHOP, accessToken: "shpat_test" } });
 // Offline session the app uses for Admin API calls (fresh, so no token refresh)
 await prisma.session.deleteMany({ where: { shop: SHOP, isOnline: false } });
 await prisma.session.create({ data: { id: `offline_${SHOP}`, shop: SHOP, state: "x", isOnline: false, accessToken: "shpat_test", scope: process.env.SCOPES, expires: new Date(Date.now() + 30 * 864e5) } });
@@ -299,6 +295,62 @@ let submissionId = "";
   const sub2 = await prisma.submission.findFirst({ where: { campaignId: wallNone.id } });
   check("name stays hidden without opt-in", d2.status === 200 && sub2?.displayName === null, sub2?.displayName);
   check("both wall products the buyer bought are linked (newest first)", parseProducts(sub2?.products).map((p) => p.title).join() === "Test Wax,Test Board", sub2?.products);
+}
+
+section("Photos or videos walls");
+{
+  const wc = await import("../app/utils/wall-campaigns");
+  check("wording: photo or video", wc.contentWord("ANY") === "photo or video" && wc.contentWord("ANY", true) === "photos or videos" && wc.contentWord("VIDEO") === "video");
+  check("a post's type comes from its file", wc.submissionTypeFor("ANY", "video/quicktime") === "VIDEO" && wc.submissionTypeFor("ANY", "image/jpeg") === "PHOTO" && wc.submissionTypeFor("VIDEO", "image/jpeg") === "VIDEO");
+  const anyWall = await mkWall("Test wall — photos or videos", { contentType: "ANY", productScope: "ALL", products: "[]" });
+  const form = await get(`campaign/${anyWall.id}/submit`, "111");
+  check("share form asks for a photo or video and accepts both", /Share your photo or video/.test(form.text) && /accept="video\/mp4[^"]*image\/jpeg/.test(form.text), form.status);
+  check("…with a preview for either", /id="previewVideo"/.test(form.text) && /id="previewImage"/.test(form.text));
+  const pdf = await post(`campaign/${anyWall.id}/upload-url`, "111", { fileName: "doc.pdf", fileType: "application/pdf", fileSize: 10 });
+  check("other file types are rejected", pdf.status === 415, pdf.status);
+  const vid = await post(`campaign/${anyWall.id}/upload-url`, "111", { fileName: "clip.mov", fileType: "video/quicktime", fileSize: 10 });
+  check("videos are accepted", vid.status === 200 && !!vid.json.uploadUrl, vid.status);
+  const bytes = crypto.randomBytes(1024);
+  const t = await post(`campaign/${anyWall.id}/upload-url`, "111", { fileName: "pic.jpg", fileType: "image/jpeg", fileSize: bytes.length });
+  check("photos are accepted", t.status === 200 && !!t.json.uploadUrl, t.status);
+  await realFetch(t.json.uploadUrl, { method: "PUT", body: bytes, headers: { "Content-Type": "image/jpeg" } });
+  const done = await post(`campaign/${anyWall.id}/complete`, "111", { key: t.json.key, uploadId: "", token: t.json.token, expires: t.json.expires, message: "" });
+  const saved = await prisma.submission.findFirst({ where: { campaignId: anyWall.id }, orderBy: { createdAt: "desc" } });
+  check("a photo on a photos-or-videos wall is saved as a photo", done.status === 200 && saved?.contentType === "PHOTO", saved?.contentType);
+  process.env.TEST_SUBMITTERS = `${SHOP}:customer111@example.com`; // get past one-post-per-wall
+  const vidOnly = await post(`campaign/${wallCredit.id}/upload-url`, "111", { fileName: "pic.jpg", fileType: "image/jpeg", fileSize: 10 });
+  process.env.TEST_SUBMITTERS = "";
+  check("video-only walls still refuse photos", vidOnly.status === 415, vidOnly.status);
+  if (saved) {
+    const r2 = await import("../app/utils/r2.server");
+    const k = r2.extractKeyFromContentUrl(saved.contentUrl);
+    if (k) await r2.deleteObject(k).catch(() => {});
+    await prisma.submission.delete({ where: { id: saved.id } });
+  }
+}
+
+section("Fallback upload (through the app) memory limits");
+{
+  // The limits are read when the route module loads: 50 MB, 2 at a time by default
+  const submitForm = (bytes: number, contentLength?: number) => {
+    const fd = new FormData();
+    fd.set("file", new File([new Uint8Array(bytes)], "clip.mp4", { type: "video/mp4" }));
+    fd.set("message", "hi");
+    const req = new Request(signed(`campaign/${wallCode.id}/submit`, "222"), { method: "POST", body: fd });
+    const headers = new Headers(req.headers);
+    if (contentLength) headers.set("content-length", String(contentLength));
+    return proxy.action({ request: new Request(req, { headers }), params: {}, context: {} } as any) as Promise<Response>;
+  };
+  process.env.TEST_SUBMITTERS = `${SHOP}:customer222@example.com`;
+  const big = await submitForm(1024, 60 * 1024 * 1024); // claims 60 MB
+  check("oversized fallback uploads are refused before being read", big.status === 302 && /error=fallback_too_large/.test(big.headers.get("location") || ""), big.headers.get("location"));
+  const page = await get(`campaign/${wallCode.id}/submit`, "222", { error: "fallback_too_large" });
+  check("…with a clear message naming the limit", /too big for the backup route \(max 50 MB\)/.test(page.text));
+  const busyPage = await get(`campaign/${wallCode.id}/submit`, "222", { error: "busy" });
+  check("busy message exists for too many at once", /handling a lot of uploads/.test(busyPage.text));
+  const shareForm = await get(`campaign/${wallCode.id}/submit`, "222");
+  check("the share page's fallback limit matches the server's", /const LEGACY_MAX_BYTES = 52428800;/.test(shareForm.text));
+  process.env.TEST_SUBMITTERS = "";
 }
 
 section("Submission limit");
@@ -500,6 +552,6 @@ for (const s of await prisma.submission.findMany({ where: { campaignId: { in: [w
     await deleteObject(posterKeyFor(key)).catch(() => {});
   }
 }
-await prisma.$disconnect();
-console.log(`\n${failed ? "✗" : "✓"} ${passed} passed, ${failed} failed  (isolated DB: ${dbFile})`);
+await testDb.cleanup();
+console.log(`\n${failed ? "✗" : "✓"} ${passed} passed, ${failed} failed  (isolated schema: ${testDb.schema}, dropped)`);
 process.exitCode = failed ? 1 : 0;
