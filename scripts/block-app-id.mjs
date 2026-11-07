@@ -10,7 +10,7 @@
  *   node scripts/block-app-id.mjs shopify.app.dev.toml   (npm run dev / npm run deploy)
  *   node scripts/block-app-id.mjs shopify.app.toml       (npm run deploy:prod)
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 // client id → numeric app id (Dev Dashboard URL, or `npm run check:metaobjects`)
 const APP_IDS = {
@@ -29,5 +29,7 @@ const template = readFileSync("scripts/templates/ugme-canvas.block.liquid", "utf
 const block = template
   .replace(/^\{%- comment -%\}\n  TEMPLATE[\s\S]*?\{%- endcomment -%\}\n/, "{%- comment -%} Generated from scripts/templates/ugme-canvas.block.liquid — edit that file. {%- endcomment -%}\n")
   .replaceAll("__APP_ID__", appId);
+// The folder can be missing on a fresh clone (the generated file isn't in git)
+mkdirSync("extensions/ugme-canvas/blocks", { recursive: true });
 writeFileSync("extensions/ugme-canvas/blocks/ugme-canvas.liquid", block);
 console.log(`✓ theme block set for ${config} (app ${appId})`);
