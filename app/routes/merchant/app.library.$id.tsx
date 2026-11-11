@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData, useFetcher } from "@remix-run/react";
 import { extractKeyFromContentUrl, getPresignedDownloadUrl, deleteObject } from "../../utils/r2.server";
 import {
   Page,
@@ -17,13 +17,14 @@ import {
   TextField,
   Tag,
   InlineGrid,
+  Checkbox,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { approveSubmission } from "../../utils/approval.server";
 import { mediaUrlsFor } from "../../utils/submission-media.server";
-import { onSubmissionRemoved } from "../../utils/public-media.server";
+import { onSubmissionRemoved, refreshWall } from "../../utils/public-media.server";
 import { checkSubmissionLimit, type PlanTierKey } from "../../utils/plans.server";
 
 function timeAgo(date: string | Date): string {
@@ -79,7 +80,28 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     select: { id: true },
   });
 
+  // This customer's history on this wall (helps spot repeat or spammy posters)
+  const [byStatus, nth] = await Promise.all([
+    prisma.submission.groupBy({
+      by: ["status"],
+      where: { customerId: submission.customerId, campaignId: submission.campaignId },
+      _count: { _all: true },
+    }),
+    prisma.submission.count({
+      where: { customerId: submission.customerId, campaignId: submission.campaignId, createdAt: { lte: submission.createdAt } },
+    }),
+  ]);
+  const countOf = (st: string) => byStatus.find((b) => b.status === st)?._count._all ?? 0;
+  const history = {
+    nth,
+    total: byStatus.reduce((sum, b) => sum + b._count._all, 0),
+    approved: countOf("APPROVED"),
+    denied: countOf("REJECTED"),
+    waiting: countOf("PENDING"),
+  };
+
   return json({
+    history,
     submission: {
       id: submission.id,
       email: submission.customer.email,
@@ -98,6 +120,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       })(),
       durationSecs: submission.durationSecs,
       description: submission.description,
+      showCaption: submission.showCaption,
       fileBytes: submission.fileBytes,
       status: submission.status,
       createdAt: submission.createdAt,
@@ -164,6 +187,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({ error: "Not found" }, { status: 404 });
   }
 
+  if (actionType === "caption") {
+    const show = formData.get("show") === "true";
+    await prisma.submission.update({ where: { id: submission.id }, data: { showCaption: show } });
+    // Approved posts are already on the wall — republish its list so the change shows
+    if (submission.status === "APPROVED") await refreshWall(submission.campaignId);
+    return json({ success: true, action: "caption", showCaption: show });
+  }
+
   if (actionType === "approve") {
     try {
       const result = await approveSubmission({ submissionId: params.id!, shop, admin });
@@ -214,6 +245,12 @@ const DENY_REASONS = [
   "Other",
 ];
 
+function ordinal(n: number) {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  return `${n}${({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] || "th"}`;
+}
+
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] || "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
@@ -228,7 +265,12 @@ function ProductThumb({ url, size, round }: { url: string | null; size: number; 
 }
 
 export default function SubmissionDetail() {
-  const { submission, nextPendingId, approvals } = useLoaderData<typeof loader>();
+  const { submission, nextPendingId, approvals, history } = useLoaderData<typeof loader>();
+  const captionFetcher = useFetcher<{ showCaption?: boolean }>();
+  // Optimistic: reflect the click right away
+  const showCaption = captionFetcher.formData
+    ? captionFetcher.formData.get("show") === "true"
+    : submission.showCaption;
   const actionData = useActionData<typeof action>() as
     | { success?: boolean; action?: string; error?: string; rewardStatus?: string; rewardError?: string }
     | undefined;
@@ -275,7 +317,7 @@ export default function SubmissionDetail() {
           </Banner>
         </Box>
       )}
-      {actionData?.success && (
+      {actionData?.success && actionData.action !== "caption" && (
         <Box paddingBlockEnd="400">
           <Banner tone={actionData.action === "approved" && actionData.rewardStatus === "FAILED" ? "warning" : "success"}>
             {actionData.action === "approved"
@@ -329,9 +371,22 @@ export default function SubmissionDetail() {
               </InlineStack>
               {submission.description && (
                 <div style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 10, padding: "10px 12px" }}>
-                  <BlockStack gap="100">
-                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Caption · shown on your wall</Text>
-                    <Text as="p" variant="bodyMd">{submission.description}</Text>
+                  <BlockStack gap="200">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Customer's caption</Text>
+                      <div style={{ opacity: showCaption ? 1 : 0.55 }}>
+                        <Text as="p" variant="bodyMd">{submission.description}</Text>
+                      </div>
+                    </BlockStack>
+                    <Checkbox
+                      label="Show this caption on your wall"
+                      helpText={showCaption ? undefined : "The post can still go on your wall, just without the caption."}
+                      checked={showCaption}
+                      disabled={captionFetcher.state !== "idle"}
+                      onChange={(checked) =>
+                        captionFetcher.submit({ _action: "caption", show: String(checked) }, { method: "post" })
+                      }
+                    />
                   </BlockStack>
                 </div>
               )}
@@ -426,6 +481,27 @@ export default function SubmissionDetail() {
                   </BlockStack>
                 </InlineStack>
 
+                <InlineStack align="space-between" blockAlign="center" gap="200">
+                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Posts to this wall</Text>
+                  {history.total > 1 ? (
+                    <Badge tone={history.total >= 3 ? "attention" : "info"}>{`${ordinal(history.nth)} post`}</Badge>
+                  ) : (
+                    <Text as="p" variant="bodySm">First post</Text>
+                  )}
+                </InlineStack>
+                {history.total > 1 && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {[
+                      `${history.total} in total`,
+                      history.approved ? `${history.approved} approved` : null,
+                      history.denied ? `${history.denied} denied` : null,
+                      history.waiting ? `${history.waiting} waiting` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </Text>
+                )}
+
                 <BlockStack gap="200">
                   <InlineStack align="space-between" blockAlign="center">
                     <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Bought</Text>
@@ -444,10 +520,19 @@ export default function SubmissionDetail() {
                   <Text as="p" variant="bodySm" tone="subdued">Shown as product cards next to this post on the wall.</Text>
                 </BlockStack>
 
-                <InlineStack align="space-between" blockAlign="center" gap="200">
-                  <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">On the wall as</Text>
-                  <Text as="p" variant="bodySm">{submission.showsName || "“Verified buyer” (name hidden)"}</Text>
-                </InlineStack>
+                <BlockStack gap="100">
+                  <InlineStack align="space-between" blockAlign="center" gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Name on the wall</Text>
+                    <Text as="p" variant="bodySm">
+                      {submission.showsName ? `“${submission.showsName} · Verified buyer”` : "“Verified buyer”"}
+                    </Text>
+                  </InlineStack>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {submission.showsName
+                      ? "They chose to show their first name, taken from their Shopify customer profile."
+                      : "They chose not to show their name."}
+                  </Text>
+                </BlockStack>
               </BlockStack>
             </Card>
           </BlockStack>

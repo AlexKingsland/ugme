@@ -209,6 +209,7 @@ model Submission {
   fileBytes     Int            @default(0)
   durationSecs  Int?
   description   String?
+  showCaption   Boolean        @default(true) // merchant can hide the caption on the wall without rejecting the post
   subscriptionId String?          // Recharge (or other provider) subscription ID tied to this submission
   products      String         @default("[]") // JSON [{ id, title, handle, imageUrl }] — wall products this verified buyer purchased (product cards)
   displayName   String?        // "Sam K." — only set when the customer opted in to showing their name

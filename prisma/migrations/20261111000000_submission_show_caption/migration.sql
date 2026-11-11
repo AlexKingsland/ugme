@@ -1,0 +1,1 @@
+ALTER TABLE "Submission" ADD COLUMN "showCaption" BOOLEAN NOT NULL DEFAULT true;

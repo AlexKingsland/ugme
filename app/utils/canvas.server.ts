@@ -92,6 +92,7 @@ export async function getCanvasMedia(
       displayName: true,
       products: true,
       description: true,
+      showCaption: true,
     },
     orderBy: { createdAt: "desc" },
     take: MAX_ITEMS,
@@ -113,7 +114,7 @@ export async function getCanvasMedia(
         height: null,
         caption: s.displayName ? `${s.displayName} · Verified buyer` : "Verified buyer",
         author: s.displayName || null,
-        message: s.description ? s.description.slice(0, 300) : null,
+        message: s.description && s.showCaption ? s.description.slice(0, 300) : null,
         verified: true,
         products,
       };

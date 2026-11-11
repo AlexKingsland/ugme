@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { Link, useLoaderData } from "@remix-run/react";
+import { ChevronRightIcon } from "@shopify/polaris-icons";
 import {
   Page,
   Layout,
@@ -15,6 +16,7 @@ import {
   Box,
   InlineGrid,
   Banner,
+  Icon,
   ProgressBar,
   Thumbnail,
 } from "@shopify/polaris";
@@ -102,7 +104,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const plan = getPlan((shop.planTier as PlanTierKey) || "FREE");
   return json({
-    stats: { liveWalls: walls.filter((w) => w.status === "ACTIVE").length, onWall, pendingCount, rewardsSent },
+    stats: { liveWalls: walls.filter((w) => w.status === "ACTIVE").length, totalWalls: walls.length, onWall, pendingCount, rewardsSent },
     storage: { usedBytes: storageAgg._sum.fileBytes || 0, plan },
     submissions: { monthlyCount: monthlySubmissions, plan },
     pending,
@@ -136,17 +138,43 @@ function timeAgo(d: string) {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
-function StatCard({ title, value, helpText, url }: { title: string; value: number; helpText?: string; url?: string }) {
-  return (
-    <Card>
-      <BlockStack gap="100">
-        <Text as="p" variant="bodyMd" tone="subdued">{title}</Text>
-        <Text as="p" variant="headingXl">{value}</Text>
-        {helpText && (url ? <Button variant="plain" url={url}>{helpText}</Button> : <Text as="p" variant="bodySm" tone="subdued">{helpText}</Text>)}
-      </BlockStack>
-    </Card>
+function StatCard({ title, value, detail, tone, url }: {
+  title: string; value: number; detail: string; tone?: "attention"; url?: string;
+}) {
+  const body = (
+    <div className={`sw-stat${url ? " sw-stat--link" : ""}`}>
+      <Card>
+        <BlockStack gap="100">
+          <InlineStack align="space-between" blockAlign="center" wrap={false}>
+            <InlineStack gap="200" blockAlign="center" wrap={false}>
+              {tone === "attention" && <span className="sw-stat__dot" aria-hidden="true" />}
+              <Text as="p" variant="bodyMd" tone="subdued">{title}</Text>
+            </InlineStack>
+            {url && <span className="sw-stat__chevron"><Icon source={ChevronRightIcon} tone="subdued" /></span>}
+          </InlineStack>
+          <Text as="p" variant="headingXl">{value}</Text>
+          <Text as="p" variant="bodySm" tone={tone === "attention" ? "caution" : "subdued"}>{detail}</Text>
+        </BlockStack>
+      </Card>
+    </div>
+  );
+  return url ? (
+    <Link to={url} style={{ textDecoration: "none", color: "inherit", display: "block", height: "100%" }} aria-label={`${title}: ${value}. ${detail}`}>
+      {body}
+    </Link>
+  ) : (
+    body
   );
 }
+
+const STAT_CSS = `
+.sw-stat,.sw-stat>.Polaris-ShadowBevel{height:100%}
+.sw-stat--link>.Polaris-ShadowBevel{transition:box-shadow .15s ease,transform .15s ease}
+.sw-stat--link:hover>.Polaris-ShadowBevel{box-shadow:var(--p-shadow-300);transform:translateY(-1px)}
+.sw-stat__chevron{opacity:.45;transition:opacity .15s ease,transform .15s ease;display:inline-flex}
+.sw-stat--link:hover .sw-stat__chevron{opacity:1;transform:translateX(2px)}
+.sw-stat__dot{width:8px;height:8px;border-radius:999px;background:var(--p-color-icon-caution);flex:0 0 8px}
+`;
 
 function usagePct(used: number, limit: number | null | undefined) {
   return !limit || limit === Infinity ? 0 : Math.min((used / limit) * 100, 100);
@@ -250,11 +278,23 @@ export default function Dashboard() {
             </Banner>
           ));
         })()}
+        <style dangerouslySetInnerHTML={{ __html: STAT_CSS }} />
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-          <StatCard title="Live walls" value={stats.liveWalls} />
-          <StatCard title="Waiting for review" value={stats.pendingCount} helpText={stats.pendingCount ? "Review now" : "All caught up"} url={stats.pendingCount ? "/app/library" : undefined} />
-          <StatCard title="On your walls" value={stats.onWall} helpText="Approved submissions" />
-          <StatCard title="Rewards sent" value={stats.rewardsSent} helpText="Discount codes + store credit" />
+          <StatCard
+            title="Live walls"
+            value={stats.liveWalls}
+            detail={stats.totalWalls ? `of ${stats.totalWalls} wall campaign${stats.totalWalls === 1 ? "" : "s"}` : "No wall campaigns yet"}
+            url="/app/walls"
+          />
+          <StatCard
+            title="Waiting for review"
+            value={stats.pendingCount}
+            detail={stats.pendingCount ? "Needs your review" : "All caught up"}
+            tone={stats.pendingCount ? "attention" : undefined}
+            url="/app/library"
+          />
+          <StatCard title="On your walls" value={stats.onWall} detail="Approved submissions" url="/app/library?tab=approved" />
+          <StatCard title="Rewards sent" value={stats.rewardsSent} detail="Discount codes + store credit" />
         </InlineGrid>
 
         {sales && <SalesCard sales={sales} />}

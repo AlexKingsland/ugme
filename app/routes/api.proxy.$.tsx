@@ -782,7 +782,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       <!-- File preview (hidden until file selected) -->
       <div id="filePreview" style="display: none; margin-bottom: 20px; border-radius: var(--ugme-radius); overflow: hidden; background: var(--ugme-surface);">
         <video id="previewVideo" style="display: none; width: 100%; max-height: 300px; object-fit: contain; background: #000;" controls playsinline></video>
-        <img id="previewImage" style="display: none; width: 100%; max-height: 300px; object-fit: contain;" alt="Preview" />
+        <img id="previewImage" style="display: none; width: 100%; max-height: 300px; object-fit: contain;" alt="" />
         <div style="padding: 12px; display: flex; align-items: center; justify-content: space-between;">
           <div>
             <div id="fileName" style="font-weight: 600; font-size: 14px;"></div>
@@ -904,28 +904,100 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       function updateSubmitState() {
         const hasFile = fileInput.files && fileInput.files.length > 0;
         const termsChecked = termsCheckbox.checked;
-        const canSubmit = hasFile && termsChecked;
+        const canSubmit = hasFile && termsChecked && !converting;
         submitBtn.disabled = !canSubmit;
         submitBtn.style.opacity = canSubmit ? '1' : '0.5';
         submitBtn.style.cursor = canSubmit ? 'pointer' : 'not-allowed';
       }
 
-      fileInput.addEventListener('change', function() {
-        const file = this.files[0];
-        if (!file) return;
+      // iPhone photos are often HEIC, which most browsers (and so the wall) can't show.
+      // Convert them to JPEG here, before upload: natively where the browser can
+      // decode HEIC (Safari), otherwise with a small converter loaded only when needed.
+      // heic-to (current libheif) handles recent iPhone photos; heic2any is the older backup
+      const HEIC_TO = 'https://cdn.jsdelivr.net/npm/heic-to@1.6.6/dist/iife/heic-to.js';
+      const HEIC2ANY = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+      var converting = false;
+      function isHeic(f) { return (f.type || '').toLowerCase().indexOf('image/hei') === 0 || /[.]hei[cf]$/i.test(f.name || ''); }
+      const loaded = {};
+      function loadScript(src) {
+        if (loaded[src]) return loaded[src];
+        return loaded[src] = new Promise(function(resolve, reject) {
+          const el = document.createElement('script');
+          el.src = src; el.async = true;
+          el.onload = function() { resolve(); };
+          el.onerror = function() { delete loaded[src]; reject(new Error('converter failed to load: ' + src)); };
+          document.head.appendChild(el);
+        });
+      }
+      function bitmapToJpeg(bmp) {
+        const max = 4096;
+        const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        return new Promise(function(resolve, reject) {
+          c.toBlob(function(b) { b ? resolve(b) : reject(new Error('encode failed')); }, 'image/jpeg', 0.9);
+        });
+      }
+      async function heicToJpeg(file) {
+        if (window.createImageBitmap) {
+          try { return await bitmapToJpeg(await createImageBitmap(file)); } catch (e) { /* no native HEIC support */ }
+        }
+        try {
+          await loadScript(HEIC_TO);
+          const heicTo = window.HeicTo && (window.HeicTo.heicTo || window.HeicTo); // the browser build exposes the function itself
+          return await heicTo({ blob: file, type: 'image/jpeg', quality: 0.9 });
+        } catch (e) {
+          console.warn('[social-wall] heic-to failed, trying heic2any', e);
+        }
+        await loadScript(HEIC2ANY);
+        const out = await window.heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+        return Array.isArray(out) ? out[0] : out;
+      }
 
-        uploadArea.style.display = 'none';
-        filePreview.style.display = 'block';
+      function showFile(file) {
         fileName.textContent = file.name;
         fileSize.textContent = formatBytes(file.size);
-
         // The preview matches the file (walls can take photos or videos)
         const url = URL.createObjectURL(file);
         const asVideo = file.type.indexOf('video') === 0;
         previewVideo.style.display = asVideo ? 'block' : 'none';
         previewImage.style.display = asVideo ? 'none' : 'block';
         (asVideo ? previewVideo : previewImage).src = url;
+      }
 
+      fileInput.addEventListener('change', async function() {
+        let file = this.files[0];
+        if (!file) return;
+        uploadError.style.display = 'none';
+        uploadArea.style.display = 'none';
+        filePreview.style.display = 'block';
+
+        if (isHeic(file)) {
+          converting = true;
+          previewImage.style.display = 'none'; previewVideo.style.display = 'none';
+          fileName.textContent = 'Preparing your photo…';
+          fileSize.textContent = file.name;
+          updateSubmitState();
+          try {
+            const blob = await heicToJpeg(file);
+            const jpg = new File([blob], file.name.replace(/[.]hei[cf]$/i, '') + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+            const dt = new DataTransfer();
+            dt.items.add(jpg);
+            fileInput.files = dt.files; // what both the direct upload and the backup route send
+            file = jpg;
+          } catch (e) {
+            console.warn('[social-wall] HEIC conversion failed', e);
+            converting = false;
+            removeFile.click();
+            uploadError.textContent = "We couldn't open this photo (HEIC). Please choose a JPEG or PNG, or take a screenshot of it.";
+            uploadError.style.display = 'block';
+            return;
+          }
+          converting = false;
+        }
+
+        showFile(file);
         updateSubmitState();
       });
 

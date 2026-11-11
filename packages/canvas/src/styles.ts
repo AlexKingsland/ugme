@@ -10,6 +10,7 @@ export const CSS = `
   background:rgba(17,17,17,.78);color:#fff;font-size:12px;line-height:1;padding:9px 14px;border-radius:999px;
   white-space:nowrap;letter-spacing:.01em;transition:opacity .5s ease;backdrop-filter:blur(6px)}
 .ugme-canvas__chip--hidden{opacity:0}
+.ugme-canvas__chip--sample{white-space:normal;max-width:calc(100% - 32px);text-align:center;line-height:1.35}
 .ugme-canvas__btn{position:absolute;top:12px;right:12px;z-index:2;width:36px;height:36px;border-radius:999px;border:0;
   background:rgba(255,255,255,.92);color:#111;box-shadow:0 1px 6px rgba(0,0,0,.18);cursor:pointer;display:grid;place-items:center;padding:0}
 .ugme-canvas__btn svg{width:16px;height:16px}

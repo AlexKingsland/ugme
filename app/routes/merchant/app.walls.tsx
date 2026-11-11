@@ -11,8 +11,6 @@ import {
   Badge,
   Button,
   EmptyState,
-  ResourceList,
-  ResourceItem,
   Thumbnail,
   Box,
   Banner,
@@ -131,26 +129,20 @@ export default function WallCampaigns() {
       <Layout>
         <Layout.Section>
           <Card padding="0">
-            <ResourceList
-              resourceName={{ singular: "wall campaign", plural: "wall campaigns" }}
-              items={walls}
-              renderItem={(w) => {
-                const st = STATUS[w.status] ?? { label: w.status };
-                const where =
-                  w.usedOn === null
-                    ? null
-                    : w.usedOn.length
-                      ? `On your theme: ${w.usedOn.join(", ")}`
-                      : "Not on your live theme yet";
-                return (
-                  <ResourceItem
-                    id={w.id}
-                    url={`/app/walls/${w.id}`}
-                    media={<Thumbnail source={w.image || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-product-1_small.png"} alt="" size="small" />}
-                    accessibilityLabel={`Open ${w.title}`}
-                  >
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-                      <div style={{ minWidth: 0, flex: 1 }}>
+            {walls.map((w, i) => {
+              const st = STATUS[w.status] ?? { label: w.status };
+              const where =
+                w.usedOn === null
+                  ? null
+                  : w.usedOn.length
+                    ? `On your theme: ${w.usedOn.join(", ")}`
+                    : "Not on your live theme yet";
+              return (
+                <div key={w.id} style={{ borderTop: i ? "1px solid var(--p-color-border-secondary)" : undefined }}>
+                  <Box padding="400">
+                    <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                      <Thumbnail source={w.image || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-product-1_small.png"} alt="" size="small" />
+                      <div style={{ minWidth: 0, flex: "1 1 220px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                           <div style={{ minWidth: 0 }}>
                             <Text as="h3" variant="bodyMd" fontWeight="semibold" truncate>{w.title}</Text>
@@ -160,7 +152,7 @@ export default function WallCampaigns() {
                           </div>
                         </div>
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {w.productsLabel} · {w.reward}
+                          {w.productsLabel} · {w.reward} · {w.posts} submission{w.posts === 1 ? "" : "s"}
                         </Text>
                         {where && (
                           <Text as="p" variant="bodySm" tone={w.usedOn && w.usedOn.length ? "success" : "caution"}>
@@ -168,15 +160,23 @@ export default function WallCampaigns() {
                           </Text>
                         )}
                       </div>
-                      <BlockStack gap="100" inlineAlign="end">
-                        <Text as="p" variant="bodySm">{w.posts} submission{w.posts === 1 ? "" : "s"}</Text>
-                        {w.pending > 0 && <Badge tone="attention">{`${w.pending} to review`}</Badge>}
-                      </BlockStack>
+                      <InlineStack gap="200" blockAlign="center" wrap={false}>
+                        <Button url={`/app/walls/${w.id}`} accessibilityLabel={`Edit ${w.title}`}>Edit</Button>
+                        {w.pending > 0 ? (
+                          <Button variant="primary" url={`/app/library?tab=pending&campaign=${w.id}`}>
+                            {`Review ${w.pending} submission${w.pending === 1 ? "" : "s"}`}
+                          </Button>
+                        ) : (
+                          <Button url={`/app/library?tab=approved&campaign=${w.id}`} disabled={w.posts === 0}>
+                            View submissions
+                          </Button>
+                        )}
+                      </InlineStack>
                     </div>
-                  </ResourceItem>
-                );
-              }}
-            />
+                  </Box>
+                </div>
+              );
+            })}
           </Card>
         </Layout.Section>
         {!usageKnown && (

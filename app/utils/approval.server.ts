@@ -83,10 +83,17 @@ export async function approveSubmission(params: {
     },
   });
 
+  const t0 = Date.now();
   const outcome = await fulfillReward({ submissionId, shop, admin });
+  const rewardMs = Date.now() - t0;
 
-  // Publish to the CDN + refresh the wall's post list (never blocks approval)
-  await onSubmissionApproved(submissionId);
+  // Copy the media to the public CDN folder and rebuild the wall's post list in the
+  // background: copying a large video can take a while, and the merchant shouldn't
+  // wait on it. It never throws; the post shows on the wall a few seconds later.
+  const t1 = Date.now();
+  void onSubmissionApproved(submissionId).then(() =>
+    console.log(`[approval] ${submissionId}: reward ${rewardMs}ms, published to wall ${Date.now() - t1}ms`),
+  );
 
   return {
     rewardStatus: outcome.status,

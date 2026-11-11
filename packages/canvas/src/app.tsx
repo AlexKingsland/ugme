@@ -6,6 +6,7 @@ import { InfiniteScene, type SceneHandlers } from "./scene";
 import type { CanvasOptions, MediaItem, SelectedMedia } from "./types";
 import { isTouchDevice } from "./utils";
 import { VideoPool } from "./video-pool";
+import { samplePosts } from "./samples";
 
 const KEY_MAP: Record<string, string> = {
   w: "forward", arrowup: "forward",
@@ -67,6 +68,8 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
   const [full, setFull] = React.useState(false);
   // The wall's submission limit is reached → no "Share yours" button
   const [wallFull, setWallFull] = React.useState(false);
+  // Theme editor + no approved posts yet → sample posts, so the merchant sees the wall
+  const [isSample, setIsSample] = React.useState(false);
 
   const pool = React.useMemo(() => new VideoPool(), []);
   const pausedRef = React.useRef(false);
@@ -86,6 +89,15 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
         setWallFull(data.wall?.spotsLeft === 0);
         // Older cached lists don't carry each post's wall — fall back to this block's wall
         const items = (data.items ?? []).map((i) => (i.wall || !options.wall ? i : { ...i, wall: options.wall }));
+        if (!items.length && options.designMode) {
+          const samples = samplePosts();
+          if (samples.length) {
+            setIsSample(true);
+            setState({ status: "ready", media: samples });
+            return;
+          }
+        }
+        setIsSample(false);
         setState({ status: "ready", media: items });
         if (!options.designMode) void syncViewsToCart();
       })
@@ -249,8 +261,14 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
 
       {state.status === "ready" && state.media.length > 0 && revealed && (
         <>
-          {options.showHint !== false && (
-            <div className={`ugme-canvas__chip${hintVisible ? "" : " ugme-canvas__chip--hidden"}`}>{hint}</div>
+          {isSample ? (
+            <div className="ugme-canvas__chip ugme-canvas__chip--sample">
+              Sample posts · only you see these, in the theme editor
+            </div>
+          ) : (
+            options.showHint !== false && (
+              <div className={`ugme-canvas__chip${hintVisible ? "" : " ugme-canvas__chip--hidden"}`}>{hint}</div>
+            )
           )}
           {options.share && options.shareUrl && !wallFull && (
             <a className="ugme-canvas__share" href={options.shareUrl}>

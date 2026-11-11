@@ -538,64 +538,42 @@ export default function Library() {
         ) : isPending ? (
           /* ───── PENDING: Review list ───── */
           <BlockStack gap="200">
+            <style dangerouslySetInnerHTML={{ __html: ".sw-review-row>.Polaris-ShadowBevel{transition:box-shadow .15s ease}.sw-review-row:hover>.Polaris-ShadowBevel{box-shadow:var(--p-shadow-300)}" }} />
             {items.map((sub: any) => {
               return (
-              <Card key={sub.id}>
+              <Link key={sub.id} to={`/app/library/${sub.id}`} className="sw-review-row" style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+              <Card>
                 <InlineStack gap="400" blockAlign="center" wrap={false}>
-                  {/* Thumbnail */}
-                  <Link to={`/app/library/${sub.id}`} style={{ textDecoration: "none" }}>
-                    <SubmissionThumbnail
-                      contentType={sub.contentType}
-                      contentUrl={sub.contentUrl}
-                      durationSecs={sub.durationSecs}
-                    />
-                  </Link>
-
-                  {/* Info */}
+                  <SubmissionThumbnail
+                    contentType={sub.contentType}
+                    contentUrl={sub.contentUrl}
+                    durationSecs={sub.durationSecs}
+                  />
                   <Box width="100%">
-                    <Link to={`/app/library/${sub.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                      <BlockStack gap="100">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">{sub.displayName}</Text>
-                          <Text as="span" tone="subdued">·</Text>
-                          <Text as="span" tone="subdued">{sub.campaignTitle}</Text>
-                        </InlineStack>
-                        <Text as="span" variant="bodySm" tone="subdued">
-                          {sub.contentType === "VIDEO" ? "Video" : "Photo"}{sub.description ? `: ${sub.description}` : ""}
-                        </Text>
-                        <Text as="span" variant="bodySm" tone="subdued">
-                          Waiting {timeAgo(sub.createdAt)} · {sub.rewardLabel} reward
-                        </Text>
-                      </BlockStack>
-                    </Link>
+                    <BlockStack gap="100">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">{sub.displayName}</Text>
+                        <Text as="span" tone="subdued">·</Text>
+                        <Text as="span" tone="subdued">{sub.campaignTitle}</Text>
+                      </InlineStack>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        {sub.contentType === "VIDEO" ? "Video" : "Photo"}{sub.description ? `: ${sub.description}` : ""}
+                      </Text>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        {timeAgo(sub.createdAt) === "Today" ? "Sent today" : `Waiting ${timeAgo(sub.createdAt)}`} · {/no reward/i.test(sub.rewardLabel) ? "No reward" : `Reward: ${sub.rewardLabel}`}
+                      </Text>
+                    </BlockStack>
                   </Box>
-
-                  {/* Quick actions */}
-                  <InlineStack gap="200">
-                    <Button
-                      tone="success"
-                      variant="primary"
-                      onClick={() => handleApprove(sub.id)}
-                      loading={isActing}
-                      size="slim"
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      tone="critical"
-                      onClick={() => handleDeny(sub.id)}
-                      loading={isActing}
-                      size="slim"
-                    >
-                      Deny
-                    </Button>
-                  </InlineStack>
+                  <div style={{ flex: "0 0 auto", pointerEvents: "none" }}>
+                    <Button>Review</Button>
+                  </div>
                 </InlineStack>
               </Card>
+              </Link>
               );
             })}
             <Text as="p" variant="bodySm" tone="subdued">
-              Approving issues the reward immediately. Denied submissions are permanently discarded.
+              Open a submission to watch it, check the customer's caption and history, then approve or deny.
             </Text>
           </BlockStack>
         ) : (

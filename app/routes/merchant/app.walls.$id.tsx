@@ -33,6 +33,7 @@ import { PROXY_BASE } from "../../utils/proxy-path";
 import { refreshWall } from "../../utils/public-media.server";
 import { liveOnlineStoreProducts } from "../../utils/product-availability.server";
 import { validateWall, type WallForm } from "../../utils/wall-validate";
+import { ASK_IDEAS } from "../../utils/ask-ideas";
 
 import type { RewardChoice } from "../../utils/wall-validate";
 
@@ -495,6 +496,7 @@ export default function WallCampaignEditor() {
                   maxLength={500}
                   showCharacterCount
                 />
+                <AskIdeas onPick={(ask) => set("moment", ask)} />
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd" fontWeight="medium">Checklist (optional)</Text>
                   {f.checklist.map((item, i) => (
@@ -761,5 +763,48 @@ export default function WallCampaignEditor() {
         </Layout.Section>
       </Layout>
     </Page>
+  );
+}
+
+/** "Need ideas?" — example asks by kind of store; picking one fills "Your ask". */
+function AskIdeas({ onPick }: { onPick: (ask: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [group, setGroup] = useState(ASK_IDEAS[0].id);
+  const current = ASK_IDEAS.find((g) => g.id === group) ?? ASK_IDEAS[0];
+  if (!open) {
+    return (
+      <InlineStack>
+        <Button variant="plain" onClick={() => setOpen(true)}>Need ideas? See example asks</Button>
+      </InlineStack>
+    );
+  }
+  return (
+    <div style={{ border: "1px solid var(--p-color-border-secondary)", borderRadius: 12, padding: 16 }}>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="p" variant="bodyMd" fontWeight="semibold">Example asks</Text>
+          <Button variant="plain" onClick={() => setOpen(false)}>Hide</Button>
+        </InlineStack>
+        <InlineStack gap="200" wrap>
+          {ASK_IDEAS.map((g) => (
+            <Button key={g.id} size="slim" pressed={g.id === group} onClick={() => setGroup(g.id)}>
+              {g.label}
+            </Button>
+          ))}
+        </InlineStack>
+        <BlockStack gap="200">
+          {current.asks.map((ask) => (
+            <div
+              key={ask}
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", background: "var(--p-color-bg-surface-secondary)", borderRadius: 10 }}
+            >
+              <Text as="span" variant="bodyMd">{ask}</Text>
+              <Button size="slim" onClick={() => { onPick(ask); setOpen(false); }}>Use this</Button>
+            </div>
+          ))}
+        </BlockStack>
+        <Text as="p" variant="bodySm" tone="subdued">Picking one fills in your ask. You can edit it after.</Text>
+      </BlockStack>
+    </div>
   );
 }

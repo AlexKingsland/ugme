@@ -375,6 +375,22 @@ section("Submission limit");
   check("rejecting a submission frees its spot", /1 spot left/.test(reopened.text), reopened.text.slice(0, 200));
 }
 
+section("Captions");
+{
+  const capWall = await mkWall("Test wall — captions", { productScope: "ALL", products: "[]" });
+  const cust = await prisma.customer.findFirst({ where: { shopId: shopRow.id, shopifyCustomerId: "222" } });
+  const post = await prisma.submission.create({
+    data: { campaignId: capWall.id, customerId: cust!.id, status: "APPROVED", contentType: "PHOTO", contentUrl: "https://example.com/p.jpg", description: "Best espresso of my life", rightsAccepted: true },
+  });
+  const shown = JSON.parse((await get(`canvas`, undefined, { wall: capWall.id })).text);
+  check("caption shows on the wall by default", shown.items?.find((i: any) => i.id === post.id)?.message === "Best espresso of my life", shown.items);
+  await prisma.submission.update({ where: { id: post.id }, data: { showCaption: false } });
+  const hidden = JSON.parse((await get(`canvas`, undefined, { wall: capWall.id })).text);
+  const item = hidden.items?.find((i: any) => i.id === post.id);
+  check("hidden caption: the post stays, without its caption", !!item && item.message === null, hidden.items);
+  await prisma.submission.delete({ where: { id: post.id } });
+}
+
 // ── 3. approval + rewards ───────────────────────────────────────
 section("Rewards");
 const { fulfillReward } = await import("../app/utils/rewards.server");
