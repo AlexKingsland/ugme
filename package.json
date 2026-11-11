@@ -2,8 +2,8 @@
   "name": "ugme",
   "private": true,
   "scripts": {
-    "build": "remix vite:build",
-    "dev": "node scripts/block-app-id.mjs shopify.app.dev.toml && shopify app dev",
+    "build": "node scripts/sync-demo-bundle.mjs && remix vite:build",
+    "dev": "node scripts/block-app-id.mjs shopify.app.dev.toml && node scripts/sync-demo-bundle.mjs && shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
     "deploy": "node scripts/block-app-id.mjs shopify.app.dev.toml && shopify app deploy",

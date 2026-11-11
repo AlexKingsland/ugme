@@ -1,0 +1,1 @@
+ALTER TABLE "Submission" ADD COLUMN "fromBrand" BOOLEAN NOT NULL DEFAULT false;

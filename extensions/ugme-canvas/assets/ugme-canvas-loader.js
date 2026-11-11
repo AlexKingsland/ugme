@@ -34,7 +34,8 @@
       var ps = data.items[i].products || [];
       for (var j = 0; j < ps.length; j++) if (ps[j].id === gid) { items.push(data.items[i]); break; }
     }
-    return { wall: data.wall, items: items };
+    // `all` lets the wall fall back to every post when this product has too few
+    return { wall: data.wall, items: items, all: data.items };
   }
 
   // Fetch the media list and warm the thumbnails *while* the 3D bundle downloads,

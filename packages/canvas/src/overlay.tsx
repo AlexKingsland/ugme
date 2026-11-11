@@ -119,11 +119,15 @@ export function MediaOverlay({
           )}
         </div>
         <div className="ugme-overlay__meta">
-          {item.verified !== false && (
-            <span className="ugme-overlay__verified">
-              <CheckIcon />
-              Verified buyer
-            </span>
+          {item.brand ? (
+            <span className="ugme-overlay__verified ugme-overlay__verified--brand">From the brand</span>
+          ) : (
+            item.verified !== false && (
+              <span className="ugme-overlay__verified">
+                <CheckIcon />
+                Verified buyer
+              </span>
+            )
           )}
           {item.author && <span className="ugme-overlay__author">{item.author}</span>}
         </div>

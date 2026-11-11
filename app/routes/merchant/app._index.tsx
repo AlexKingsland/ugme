@@ -1,4 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs, SerializeFrom } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { ChevronRightIcon } from "@shopify/polaris-icons";
@@ -25,6 +25,8 @@ import { extractKeyFromContentUrl, getPresignedDownloadUrl } from "../../utils/r
 import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { getPlan, type PlanTierKey } from "../../utils/plans.server";
+import { overviewData } from "../../utils/overview.server";
+import { Overview } from "../../components/Overview";
 import { formatBytes } from "../../utils/format";
 import { parseProducts } from "../../utils/wall-campaigns";
 import { campaignRewardLabel } from "../../utils/rewards/presenters";
@@ -61,8 +63,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
   });
-  // New merchants land on the "create your first wall" screen
-  if (!walls.length) return redirect("/app/walls");
+  // New merchants land on the overview: what Social Wall does + setup steps
+  if (!walls.length) {
+    return json({ mode: "overview" as const, ...(await overviewData(admin.graphql, shop)) });
+  }
 
   const inShop = { campaign: { shopId: shop.id } };
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -71,7 +75,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.submission.count({ where: { ...inShop, status: "PENDING" } }),
     prisma.reward.count({ where: { customer: { shopId: shop.id }, status: "APPLIED", rewardType: { in: ["DISCOUNT_CODE", "STORE_CREDIT"] } } }),
     prisma.submission.aggregate({ where: inShop, _sum: { fileBytes: true } }),
-    prisma.submission.count({ where: { ...inShop, status: "APPROVED", reviewedAt: { gte: monthStart } } }),
+    prisma.submission.count({
+      where: { ...inShop, status: "APPROVED", ...(getPlan((shop.planTier as PlanTierKey) || "FREE").approvalPeriod === "month" ? { reviewedAt: { gte: monthStart } } : {}) },
+    }),
     prisma.submission.findMany({
       where: { ...inShop, status: "PENDING" },
       include: { customer: { select: { email: true } }, campaign: { select: { title: true } } },
@@ -247,11 +253,28 @@ const STATUS: Record<string, { tone?: "success" | "attention" | "info"; label: s
   DRAFT: { tone: "info", label: "Draft" },
 };
 
-export default function Dashboard() {
-  const { stats, storage, submissions, pending, walls, sales } = useLoaderData<typeof loader>();
+export default function Home() {
+  const data = useLoaderData<typeof loader>();
+  if ("mode" in data && data.mode === "overview") {
+    return <Overview {...data} />;
+  }
+  return <Dashboard />;
+}
+
+type DashboardData = Exclude<SerializeFrom<typeof loader>, { mode: "overview" }>;
+
+function Dashboard() {
+  const { stats, storage, submissions, pending, walls, sales } = useLoaderData<typeof loader>() as DashboardData;
 
   return (
-    <Page title="Dashboard" primaryAction={{ content: "Create wall campaign", url: "/app/walls/new" }}>
+    <Page
+      title="Dashboard"
+      primaryAction={{ content: "Create wall campaign", url: "/app/walls/new" }}
+      secondaryActions={[
+        { content: "Overview", url: "/app/overview" },
+        { content: "View example wall", url: "/app/demo" },
+      ]}
+    >
       <BlockStack gap="500">
         {(() => {
           const storagePct = usagePct(storage.usedBytes, storage.plan.storageBytes);
@@ -260,9 +283,11 @@ export default function Dashboard() {
           const atLimit = approvalLimit != null && approvalLimit !== Infinity && submissions.monthlyCount >= approvalLimit;
           const banners: { key: string; tone: "warning" | "critical"; title: string; body: string }[] = [];
           if (atLimit) {
-            banners.push({ key: "approvals", tone: "critical", title: "You've reached this month's approval limit", body: `You've approved ${submissions.monthlyCount} of ${approvalLimit} submissions this month. New submissions wait safely as pending — upgrade to approve them now.` });
+            banners.push(submissions.plan.approvalPeriod === "total"
+              ? { key: "approvals", tone: "critical", title: "You've used all your approvals", body: `You've approved ${submissions.monthlyCount} of the ${approvalLimit} posts your plan includes. New submissions wait safely as pending — upgrade, or delete approved posts you no longer need, to approve more.` }
+              : { key: "approvals", tone: "critical", title: "You've reached this month's approval limit", body: `You've approved ${submissions.monthlyCount} of ${approvalLimit} submissions this month. New submissions wait safely as pending — upgrade to approve them now.` });
           } else if (approvalPct >= 80) {
-            banners.push({ key: "approvals", tone: "warning", title: "You're close to this month's approval limit", body: `${submissions.monthlyCount} of ${approvalLimit} approvals used. Customers can keep submitting — you just can't approve beyond the limit.` });
+            banners.push({ key: "approvals", tone: "warning", title: submissions.plan.approvalPeriod === "total" ? "You're close to your plan's approval limit" : "You're close to this month's approval limit", body: `${submissions.monthlyCount} of ${approvalLimit} approvals used${submissions.plan.approvalPeriod === "total" ? "" : " this month"}. Customers can keep submitting — you just can't approve beyond the limit.` });
           }
           const storageFull = storage.plan.storageBytes !== Infinity && storage.usedBytes >= storage.plan.storageBytes;
           if (storageFull) {
@@ -309,11 +334,11 @@ export default function Dashboard() {
             planName={storage.plan.name}
           />
           <UsageCard
-            title="Approved this month"
+            title={submissions.plan.approvalPeriod === "total" ? "Approved posts" : "Approved this month"}
             used={submissions.monthlyCount}
             limit={submissions.plan.submissionsPerMonth}
             usedLabel={`${submissions.monthlyCount} approved`}
-            limitLabel={submissions.plan.submissionLabel.replace("/ month", "approvals / month")}
+            limitLabel={submissions.plan.approvalPeriod === "total" ? `${submissions.plan.submissionsPerMonth} included` : submissions.plan.submissionLabel.replace("/ month", "approvals / month")}
             planName={submissions.plan.name}
           />
         </InlineGrid>

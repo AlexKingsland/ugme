@@ -19,6 +19,8 @@ export type MediaItem = {
   message?: string | null;
   /** Posts come from verified buyers */
   verified?: boolean;
+  /** The store's own post — labelled "From the brand" */
+  brand?: boolean;
   /** Products the buyer purchased — shown as product cards in the viewer */
   products?: ProductRef[];
 };
@@ -46,6 +48,21 @@ export type CanvasOptions = {
   showHint?: boolean;
   /** Theme editor — show friendlier empty states */
   designMode?: boolean;
+  /** Show the wall only once it has this many posts (0 = always) */
+  minPosts?: number;
+  /** Below minPosts: an invitation banner, or nothing */
+  belowMin?: "banner" | "hide";
+  /** Merchant's banner text (blank = written from the wall's reward) */
+  bannerText?: string;
+  /** Product page's product, for "Bought <product>?" */
+  productTitle?: string;
+  /** Optional text in the middle of the wall (blank = none) */
+  centerHeading?: string;
+  centerSubtext?: string;
+  /** Center text colour, e.g. "#111111" */
+  centerColor?: string;
+  /** Soft frosted panel behind the center text, for readability */
+  centerBackdrop?: boolean;
 };
 
 export type ChunkData = { key: string; cx: number; cy: number; cz: number };

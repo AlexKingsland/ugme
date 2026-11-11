@@ -29,14 +29,16 @@ export async function checkSubmissionLimit(shopId: string, planTier: PlanTierKey
   const plan = getPlan(planTier);
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  // "total" plans count approved posts that still exist (deleting one frees its slot)
   const count = await prisma.submission.count({
     where: {
       campaign: { shopId },
       status: "APPROVED",
-      reviewedAt: { gte: monthStart },
+      ...(plan.approvalPeriod === "month" ? { reviewedAt: { gte: monthStart } } : {}),
     },
   });
   return {
+    period: plan.approvalPeriod,
     used: count,
     limit: plan.submissionsPerMonth,
     ok: count < plan.submissionsPerMonth,

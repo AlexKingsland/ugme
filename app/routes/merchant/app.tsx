@@ -49,6 +49,7 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
+        <Link to="/app/overview">Overview</Link>
         <Link to="/app/walls">Wall campaigns</Link>
         <Link to="/app/library">Submissions</Link>
         <Link to="/app/analytics">Analytics</Link>

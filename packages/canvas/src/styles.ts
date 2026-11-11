@@ -3,6 +3,18 @@ export const CSS = `
 .ugme-canvas{display:block!important;position:relative;width:100%;height:var(--ugme-canvas-height,80vh);min-height:320px;overflow:hidden;
   background:var(--ugme-canvas-bg,#fff);touch-action:none;outline:none;-webkit-user-select:none;user-select:none;
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.ugme-canvas--banner{height:auto!important;min-height:0!important;touch-action:auto;-webkit-user-select:auto;user-select:auto}
+.ugme-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:20px 24px;color:var(--ugme-empty-fg,#111)}
+.ugme-banner__text{flex:1 1 260px;min-width:0;font-size:15px;line-height:1.45}
+.ugme-banner__text b{display:block;font-size:17px;margin-bottom:2px}
+.ugme-banner__text span{opacity:.75}
+.ugme-banner .ugme-empty__cta{flex:0 0 auto}
+.ugme-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1;pointer-events:none;text-align:center;
+  width:max-content;max-width:min(86%,680px);padding:22px 34px;border-radius:28px;transition:opacity .35s ease,transform .35s ease}
+.ugme-center--backdrop{background:color-mix(in srgb,var(--ugme-canvas-bg,#fff) 70%,transparent);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.ugme-center--hidden{opacity:0;transform:translate(-50%,-50%) scale(.97)}
+.ugme-center__heading{margin:0;font-size:clamp(26px,4.6vw,58px);line-height:1.04;font-weight:700;letter-spacing:-.02em;color:inherit}
+.ugme-center__sub{margin:10px 0 0;font-size:clamp(14px,1.5vw,18px);line-height:1.4;opacity:.75;color:inherit}
 .ugme-canvas--full{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;z-index:2147483000}
 .ugme-canvas__gl{position:absolute!important;inset:0;width:100%;height:100%;touch-action:none}
 .ugme-canvas__gl canvas{display:block;touch-action:none}
@@ -52,6 +64,7 @@ export const CSS = `
 .ugme-overlay__meta{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;color:rgba(255,255,255,.85);font-size:13px;line-height:1}
 .ugme-overlay__verified{display:inline-flex;align-items:center;gap:5px;padding:6px 10px 6px 8px;border-radius:999px;background:rgba(16,185,129,.18);color:#6ee7b7;font-weight:600;font-size:12px}
 .ugme-overlay__verified svg{width:13px;height:13px}
+.ugme-overlay__verified--brand{background:rgba(255,255,255,.16);color:#fff;padding:6px 10px}
 .ugme-overlay__author{font-weight:600;color:#fff}
 .ugme-overlay__caption{margin:2px auto 0;max-width:min(calc(100vw - 48px),520px);color:rgba(255,255,255,.92);font-size:14px;line-height:1.45;text-align:center;white-space:pre-line;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .ugme-overlay__caption--more{cursor:pointer}

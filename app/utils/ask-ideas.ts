@@ -1,5 +1,5 @@
 /** Example asks for the "What to ask for" step, by kind of store. Shared with the admin UI. */
-export type AskIdeaGroup = { id: string; label: string; asks: string[] };
+export type AskIdeaGroup = { id: string; label: string; asks: string[]; questions: string[] };
 
 export const ASK_IDEAS: AskIdeaGroup[] = [
   {
@@ -10,6 +10,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Make your go-to drink with it, start to finish.",
       "Where do you drink it? Show us your favourite spot.",
     ],
+    questions: ["What's your go-to drink with it?", "How do you take your coffee?"],
   },
   {
     id: "food",
@@ -19,6 +20,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "What do you pair it with? Show us your favourite combo.",
       "Show us where it goes with you: desk, hike, road trip.",
     ],
+    questions: ["What do you pair it with?", "What's your favourite way to eat it?"],
   },
   {
     id: "apparel",
@@ -28,6 +30,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Wear it somewhere real: work, the weekend or a night out.",
       "Unbox it and try it on. First impressions welcome.",
     ],
+    questions: ["Where did you wear it first?", "How would you describe your style?"],
   },
   {
     id: "beauty",
@@ -37,6 +40,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Before and after: show us the difference.",
       "Show us the texture and how you apply it.",
     ],
+    questions: ["What's your skin type?", "Morning or evening routine?"],
   },
   {
     id: "pets",
@@ -46,6 +50,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Show us their favourite way to use it, and tell us their name.",
       "Catch the reaction: tail wags, zoomies, happy faces.",
     ],
+    questions: ["What's your pet's name?", "What breed are they?"],
   },
   {
     id: "fitness",
@@ -55,6 +60,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Show us it in action during your workout.",
       "Show us your setup: what you pack and where it goes.",
     ],
+    questions: ["How far did you go?", "Where's your favourite place to train?"],
   },
   {
     id: "home",
@@ -64,6 +70,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Show us it in action: cooking, cleaning or relaxing.",
       "Show us the before and after.",
     ],
+    questions: ["Which room is it in?", "What do you use it for most?"],
   },
   {
     id: "auto",
@@ -73,5 +80,6 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Show us the install, or the finished result.",
       "Take it on the road and show us where you ended up.",
     ],
+    questions: ["What do you drive?", "Where was this taken?"],
   },
 ];

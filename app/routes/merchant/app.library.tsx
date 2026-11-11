@@ -70,7 +70,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) {
     return json({
-      approvals: { used: 0, limit: null as number | null, reached: false },
+      approvals: { used: 0, limit: null as number | null, reached: false, period: "month" as "month" | "total" },
       items: [], campaigns: [], products: [], counts: { pending: 0, approved: 0 },
       storage: { usedBytes: 0, plan: getPlan("FREE") },
       tab, campaignFilter, mediaFilter, sort, productFilter, usedFilter,
@@ -179,7 +179,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const approvals = await checkSubmissionLimit(shop.id, (shop.planTier as PlanTierKey) || "FREE");
 
   return json({
-    approvals: { used: approvals.used, limit: Number.isFinite(approvals.limit) ? approvals.limit : null, reached: !approvals.ok },
+    approvals: { used: approvals.used, limit: Number.isFinite(approvals.limit) ? approvals.limit : null, reached: !approvals.ok, period: approvals.period },
     items: resolvedItems,
     campaigns: campaigns.map((c) => ({ id: c.id, title: c.title })),
     counts,
@@ -375,8 +375,10 @@ export default function Library() {
           </Banner>
         )}
         {approvals.reached && currentTab === "pending" && counts.pending > 0 && (
-          <Banner tone="warning" title="Monthly approval limit reached" action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
-            You've approved {approvals.used} of {approvals.limit} submissions this month. Pending submissions stay safe here — upgrade to approve more, or they can be approved next month.
+          <Banner tone="warning" title={approvals.period === "total" ? "Approval limit reached" : "Monthly approval limit reached"} action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
+            {approvals.period === "total"
+              ? `You've approved ${approvals.used} of the ${approvals.limit} posts your plan includes. Pending submissions stay safe here — upgrade, or delete approved posts you no longer need, to approve more.`
+              : `You've approved ${approvals.used} of ${approvals.limit} submissions this month. Pending submissions stay safe here — upgrade to approve more, or they can be approved next month.`}
           </Banner>
         )}
         {planInfo.storageBytes !== Infinity && storage.usedBytes >= planInfo.storageBytes && (

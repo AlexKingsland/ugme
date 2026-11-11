@@ -37,7 +37,9 @@ const ExpandIcon = ({ full }: { full: boolean }) => (
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; media: MediaItem[] };
+  | { status: "ready"; media: MediaItem[] }
+  /** Fewer posts than the block's minimum: banner (or nothing) instead of the wall */
+  | { status: "below"; wall: WallInfo };
 
 export function mediaUrl(options: CanvasOptions): string {
   const url = new URL(options.endpoint || "/apps/social-wall/canvas", window.location.origin);
@@ -47,8 +49,14 @@ export function mediaUrl(options: CanvasOptions): string {
   return url.toString();
 }
 
-type WallInfo = { spotsLeft?: number | null } | null;
-type MediaResponse = { items?: MediaItem[]; wall?: WallInfo };
+type WallInfo = {
+  spotsLeft?: number | null;
+  offer?: string | null;
+  contentWord?: string;
+  productTitle?: string | null;
+} | null;
+/** `all`: every post of the wall, when the loader filtered by product */
+type MediaResponse = { items?: MediaItem[]; all?: MediaItem[]; wall?: WallInfo };
 
 async function fetchMedia(options: CanvasOptions): Promise<MediaResponse> {
   const url = new URL(mediaUrl(options));
@@ -70,6 +78,8 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
   const [wallFull, setWallFull] = React.useState(false);
   // Theme editor + no approved posts yet → sample posts, so the merchant sees the wall
   const [isSample, setIsSample] = React.useState(false);
+  // Theme editor: a wall with some posts, but fewer than shoppers need to see it
+  const [belowNote, setBelowNote] = React.useState<number | null>(null);
 
   const pool = React.useMemo(() => new VideoPool(), []);
   const pausedRef = React.useRef(false);
@@ -84,11 +94,19 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
     // downloading this bundle) — reuse it if so.
     const prefetched = (root as HTMLElement & { __ugmeData?: Promise<MediaResponse> | null }).__ugmeData;
     (prefetched ? prefetched.catch(() => fetchMedia(options)) : fetchMedia(options))
-      .then((data) => {
+      .then(async (data) => {
         if (!alive) return;
         setWallFull(data.wall?.spotsLeft === 0);
         // Older cached lists don't carry each post's wall — fall back to this block's wall
-        const items = (data.items ?? []).map((i) => (i.wall || !options.wall ? i : { ...i, wall: options.wall }));
+        const tag = (list: MediaItem[]) => list.map((i) => (i.wall || !options.wall ? i : { ...i, wall: options.wall }));
+        let items = tag(data.items ?? []);
+        const min = options.minPosts ?? 0;
+        // "This product only": too few posts of this product → show the whole wall instead
+        if (options.product && items.length < Math.max(min, 1)) {
+          const all = data.all ?? (await fetchMedia({ ...options, product: undefined }).then((d) => d.items).catch(() => undefined));
+          if (!alive) return;
+          if (all && all.length > items.length) items = tag(all);
+        }
         if (!items.length && options.designMode) {
           const samples = samplePosts();
           if (samples.length) {
@@ -98,6 +116,16 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
           }
         }
         setIsSample(false);
+        if (min > 0 && items.length < min) {
+          if (options.designMode) {
+            setBelowNote(min); // the merchant still sees the real posts, with a note
+          } else {
+            setState({ status: "below", wall: data.wall ?? null });
+            return;
+          }
+        } else {
+          setBelowNote(null);
+        }
         setState({ status: "ready", media: items });
         if (!options.designMode) void syncViewsToCart();
       })
@@ -106,6 +134,46 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
       alive = false;
     };
   }, [options.endpoint, options.campaigns, options.wall, options.product, options.media]);
+
+  // ── center text: fades out while the shopper drags or zooms, back when they stop ──
+  const hasCenter = !!(options.centerHeading?.trim() || options.centerSubtext?.trim());
+  const [moving, setMoving] = React.useState(false);
+  React.useEffect(() => {
+    if (!hasCenter) return;
+    let timer = 0;
+    let down = false;
+    const settle = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setMoving(false), 1200);
+    };
+    const onDown = () => { down = true; window.clearTimeout(timer); setMoving(true); };
+    const onUp = () => { if (down) { down = false; settle(); } };
+    const onWheel = () => { setMoving(true); settle(); };
+    root.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    root.addEventListener("wheel", onWheel, { passive: true });
+    return () => {
+      window.clearTimeout(timer);
+      root.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      root.removeEventListener("wheel", onWheel);
+    };
+  }, [hasCenter, root]);
+
+  // ── below the minimum: shrink to a banner, or hide the block entirely ──
+  const hideBlock = state.status === "below" && (options.belowMin === "hide" || !options.share || !options.shareUrl || wallFull || state.wall?.spotsLeft === 0);
+  React.useEffect(() => {
+    const banner = state.status === "below" && !hideBlock;
+    root.classList.toggle("ugme-canvas--banner", banner);
+    if (hideBlock) root.style.setProperty("display", "none", "important");
+    else root.style.removeProperty("display");
+    return () => {
+      root.classList.remove("ugme-canvas--banner");
+      root.style.removeProperty("display");
+    };
+  }, [state.status, hideBlock, root]);
 
   // ── preload all thumbnails, then reveal the wall in one go ──
   React.useEffect(() => {
@@ -235,6 +303,29 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
           </div>
         </div>
       )}
+      {state.status === "below" && !hideBlock && (
+        <div className="ugme-banner">
+          <div className="ugme-banner__text">
+            {(() => {
+              const product = options.productTitle || state.wall?.productTitle;
+              const word = state.wall?.contentWord || "photo or video";
+              const body = options.bannerText?.trim()
+                || (state.wall?.offer ? `Share a ${word} and get ${state.wall.offer}.` : `Share a ${word} and get featured here.`);
+              return (
+                <>
+                  <b>{product ? `Bought ${product}?` : "Bought from us?"}</b>
+                  <span>{body}</span>
+                </>
+              );
+            })()}
+          </div>
+          <a className="ugme-empty__cta" href={options.shareUrl}>
+            <ShareIcon />
+            <span>{options.shareLabel || "Share yours"}</span>
+          </a>
+        </div>
+      )}
+
       {state.status === "ready" && state.media.length === 0 && (
         <div className="ugme-canvas__state">
           <div className="ugme-empty">
@@ -259,11 +350,24 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
         </div>
       )}
 
+      {state.status === "ready" && state.media.length > 0 && revealed && hasCenter && (
+        <div
+          className={`ugme-center${options.centerBackdrop !== false ? " ugme-center--backdrop" : ""}${moving || selected ? " ugme-center--hidden" : ""}`}
+          style={options.centerColor ? { color: options.centerColor } : undefined}
+          aria-hidden={moving ? true : undefined}
+        >
+          {options.centerHeading?.trim() && <h2 className="ugme-center__heading">{options.centerHeading.trim()}</h2>}
+          {options.centerSubtext?.trim() && <p className="ugme-center__sub">{options.centerSubtext.trim()}</p>}
+        </div>
+      )}
+
       {state.status === "ready" && state.media.length > 0 && revealed && (
         <>
-          {isSample ? (
+          {isSample || belowNote ? (
             <div className="ugme-canvas__chip ugme-canvas__chip--sample">
-              Sample posts · only you see these, in the theme editor
+              {isSample
+                ? "Sample posts · only you see these, in the theme editor"
+                : `Shoppers see a banner instead until this wall has ${belowNote} posts`}
             </div>
           ) : (
             options.showHint !== false && (

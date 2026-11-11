@@ -32,6 +32,14 @@ function optionsFromDataset(el: HTMLElement): CanvasOptions {
     background: d.background || undefined,
     showHint: d.showHint !== "false",
     designMode: d.designMode === "true",
+    minPosts: d.minPosts ? Math.max(0, Number(d.minPosts) || 0) : 0,
+    belowMin: d.belowMin === "hide" ? "hide" : "banner",
+    bannerText: d.bannerText || undefined,
+    productTitle: d.productTitle || undefined,
+    centerHeading: d.centerHeading || undefined,
+    centerSubtext: d.centerSubtext || undefined,
+    centerColor: d.centerColor || undefined,
+    centerBackdrop: d.centerBackdrop !== "false",
   };
 }
 

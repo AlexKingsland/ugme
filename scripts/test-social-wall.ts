@@ -389,6 +389,38 @@ section("Captions");
   const item = hidden.items?.find((i: any) => i.id === post.id);
   check("hidden caption: the post stays, without its caption", !!item && item.message === null, hidden.items);
   await prisma.submission.delete({ where: { id: post.id } });
+
+  // Merchant's question replaces the generic caption box
+  await prisma.campaign.update({ where: { id: capWall.id }, data: { captionPrompt: "What's your go-to drink?" } });
+  const asked = await get(`campaign/${capWall.id}/submit`, "222");
+  check("share page asks the wall's question", /What&#39;s your go-to drink\?|What's your go-to drink\?/.test(asked.text) && /Your answer shows with your post/.test(asked.text), asked.text.slice(0, 200));
+  const plain = await get(`campaign/${wallCode.id}/submit`, "222");
+  check("no question → plain caption box", /Caption \(optional\)/.test(plain.text));
+}
+
+section("Brand posts");
+{
+  const { brandCustomer } = await import("../app/utils/brand-posts.server");
+  const bw = await mkWall("Test wall — brand", { productScope: "ALL", products: "[]", maxSubmissions: 2 });
+  const brand = await brandCustomer({ id: shopRow.id, shopDomain: SHOP });
+  const again = await brandCustomer({ id: shopRow.id, shopDomain: SHOP });
+  check("one brand 'customer' per store", brand.id === again.id);
+  const bp = await prisma.submission.create({ data: { campaignId: bw.id, customerId: brand.id, status: "APPROVED", fromBrand: true, contentType: "PHOTO", contentUrl: "https://example.com/brand.jpg", rightsAccepted: true } });
+  const data = JSON.parse((await get(`canvas`, undefined, { wall: bw.id })).text);
+  const item = data.items?.find((i: any) => i.id === bp.id);
+  check("brand post is on the wall, labelled From the brand", !!item && item.brand === true && item.verified === false && item.caption === "From the brand", item);
+  check("brand posts don't use up customer spots", data.wall?.spotsLeft === 2, data.wall);
+  await prisma.submission.delete({ where: { id: bp.id } });
+}
+
+section("Wall data for the new-wall banner");
+{
+  const code = JSON.parse((await get(`canvas`, undefined, { wall: wallCode.id })).text);
+  check("reward wall: offer + content word", code.wall?.offer === "20% off your next order" && code.wall?.contentWord === "video", code.wall);
+  const credit = JSON.parse((await get(`canvas`, undefined, { wall: wallCredit.id })).text);
+  check("single-product wall names its product", typeof credit.wall?.productTitle === "string" && credit.wall.productTitle.length > 0, credit.wall);
+  const none = JSON.parse((await get(`canvas`, undefined, { wall: wallNone.id })).text);
+  check("no reward → no offer; several products → no product name", none.wall?.offer === null && none.wall?.productTitle === null, none.wall);
 }
 
 // ── 3. approval + rewards ───────────────────────────────────────
@@ -462,20 +494,31 @@ const admin = { graphql: (q: string, o?: any) => fetch(`https://${SHOP}/admin/ap
   check("approved featured-only post says it's on the wall", /You're on the wall!/.test(featPage.text) && /Verified buyer badge/.test(featPage.text));
 }
 
-section("Monthly approval limit + downloads");
+section("Approval limits + downloads");
 {
   const { approveSubmission, ApprovalLimitError } = await import("../app/utils/approval.server");
   const { checkPlanGates, checkSubmissionLimit } = await import("../app/utils/plans.server");
   const { mediaUrlsFor } = await import("../app/utils/submission-media.server");
-  await prisma.shop.update({ where: { id: shopRow.id }, data: { planTier: "FREE" } });
-  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const approvedNow = await prisma.submission.count({ where: { campaign: { shopId: shopRow.id }, status: "APPROVED", reviewedAt: { gte: monthStart } } });
-  const lim = await checkSubmissionLimit(shopRow.id, "FREE");
-  check("limit counts only approvals this month", lim.used === approvedNow, { used: lim.used, approvedNow });
-  const gates = await checkPlanGates(shopRow.id, "FREE", 10);
-  check("uploads aren't blocked by the monthly limit (storage only)", gates.blockedReasons.every((r: string) => /Storage/.test(r)));
-  // fill the month up to the Free limit (10) with approvals
   const cust = await prisma.customer.findFirst({ where: { shopId: shopRow.id, shopifyCustomerId: "111" } });
+  // an approval from two months ago: counts on Free (total), not on Standard (monthly)
+  const old = await prisma.submission.create({ data: { campaignId: wallNone.id, customerId: cust!.id, status: "APPROVED", reviewedAt: new Date(Date.now() - 62 * 864e5), contentType: "VIDEO", contentUrl: "https://example.com/old.mp4", rightsAccepted: true } });
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const approvedThisMonth = await prisma.submission.count({ where: { campaign: { shopId: shopRow.id }, status: "APPROVED", reviewedAt: { gte: monthStart } } });
+  const approvedAll = await prisma.submission.count({ where: { campaign: { shopId: shopRow.id }, status: "APPROVED" } });
+  const std = await checkSubmissionLimit(shopRow.id, "STARTER");
+  check("Standard: 500 a month, counts only approvals this month", std.limit === 500 && std.period === "month" && std.used === approvedThisMonth, std);
+  const pro = await checkSubmissionLimit(shopRow.id, "PRO");
+  check("Pro: unlimited approvals", pro.limit === Infinity && pro.ok);
+  const free = await checkSubmissionLimit(shopRow.id, "FREE");
+  check("Free: 50 in total, counting every approved post", free.limit === 50 && free.period === "total" && free.used === approvedAll, free);
+  await prisma.submission.delete({ where: { id: old.id } });
+  const freeAfter = await checkSubmissionLimit(shopRow.id, "FREE");
+  check("Free: deleting an approved post frees its slot", freeAfter.used === approvedAll - 1, freeAfter);
+  await prisma.shop.update({ where: { id: shopRow.id }, data: { planTier: "FREE" } });
+  const lim = freeAfter;
+  const gates = await checkPlanGates(shopRow.id, "FREE", 10);
+  check("uploads aren't blocked by the approval limit (storage only)", gates.blockedReasons.every((r: string) => /Storage/.test(r)));
+  // fill up to the Free limit (50) with approvals
   const need = Math.max(0, lim.limit - lim.used);
   for (let i = 0; i < need; i++) {
     await prisma.submission.create({ data: { campaignId: wallNone.id, customerId: cust!.id, status: "APPROVED", reviewedAt: new Date(), contentType: "VIDEO", contentUrl: "https://example.com/f.mp4", rightsAccepted: true } });
@@ -487,7 +530,8 @@ section("Monthly approval limit + downloads");
   } catch (e) {
     blocked = e;
   }
-  check("approving past the monthly limit is blocked", blocked instanceof ApprovalLimitError, String(blocked));
+  check("approving past the limit is blocked", blocked instanceof ApprovalLimitError, String(blocked));
+  check("…with Free-plan wording (no 'this month')", blocked instanceof Error && !/this month/.test(blocked.message) && /delete approved posts/.test(blocked.message), String(blocked));
   const still = await prisma.submission.findUnique({ where: { id: pendingOne.id } });
   check("…and the submission stays pending", still?.status === "PENDING");
   const pendingUrls = await mediaUrlsFor(pendingOne);

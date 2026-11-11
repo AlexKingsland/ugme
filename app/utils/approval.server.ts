@@ -39,8 +39,12 @@ function merchantMessage(reason?: string): string {
 
 /** Thrown when the plan's monthly approval limit is reached. */
 export class ApprovalLimitError extends Error {
-  constructor(readonly used: number, readonly limit: number) {
-    super(`You've used all ${limit} approvals included in your plan this month. Upgrade your plan to approve more — this submission stays pending until then.`);
+  constructor(readonly used: number, readonly limit: number, readonly period: "month" | "total" = "month") {
+    super(
+      period === "total"
+        ? `You've used all ${limit} approvals included in your plan. Upgrade your plan, or delete approved posts you no longer need, to approve more — this submission stays pending until then.`
+        : `You've used all ${limit} approvals included in your plan this month. Upgrade your plan to approve more — this submission stays pending until then.`,
+    );
   }
 }
 
@@ -69,7 +73,7 @@ export async function approveSubmission(params: {
   if (submission.status !== "APPROVED") {
     const shopRow = await prisma.shop.findUnique({ where: { id: shop.id }, select: { planTier: true } });
     const limit = await checkSubmissionLimit(shop.id, ((shopRow?.planTier as PlanTierKey) || "FREE"));
-    if (!limit.ok) throw new ApprovalLimitError(limit.used, limit.limit);
+    if (!limit.ok) throw new ApprovalLimitError(limit.used, limit.limit, limit.period);
   }
 
   // Mark submission as approved

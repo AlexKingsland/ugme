@@ -140,6 +140,7 @@ model Campaign {
   title            String
   status           CampaignStatus @default(DRAFT)
   moment           String         // The creative/contextual ask
+  captionPrompt    String?        // Merchant's question for customers ("What's your go-to drink?"); the answer is the post's caption
   productId        String?        // Shopify product GID
   productTitle     String?        // Product name for display
   productImageUrl  String?        // Product image URL for hero display
@@ -210,6 +211,7 @@ model Submission {
   durationSecs  Int?
   description   String?
   showCaption   Boolean        @default(true) // merchant can hide the caption on the wall without rejecting the post
+  fromBrand     Boolean        @default(false) // the merchant's own post (no review, no reward, "From the brand" label)
   subscriptionId String?          // Recharge (or other provider) subscription ID tied to this submission
   products      String         @default("[]") // JSON [{ id, title, handle, imageUrl }] — wall products this verified buyer purchased (product cards)
   displayName   String?        // "Sam K." — only set when the customer opted in to showing their name

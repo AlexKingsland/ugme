@@ -76,7 +76,7 @@ async function checkWallBuyer(
 /** Spots left on a wall campaign with a submission limit (rejected submissions free a spot); null = no limit. */
 async function spotsLeft(campaign: { id: string; maxSubmissions: number | null }): Promise<number | null> {
   if (campaign.maxSubmissions == null) return null;
-  const used = await prisma.submission.count({ where: { campaignId: campaign.id, status: { not: "REJECTED" } } });
+  const used = await prisma.submission.count({ where: { campaignId: campaign.id, status: { not: "REJECTED" }, fromBrand: false } });
   return Math.max(0, campaign.maxSubmissions - used);
 }
 
@@ -656,6 +656,7 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       id: true,
       title: true,
       moment: true,
+      captionPrompt: true,
       contentType: true,
       captureSpecs: true,
       rewardCycles: true, rewardFrequency: true,
@@ -834,9 +835,9 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
       </label>
 
       <!-- Optional message -->
-      <div class="ugme-section-label">Caption (optional)</div>
-      <p style="font-size: 13px; color: var(--ugme-muted); margin: -4px 0 8px;">Shown with your post on the wall.</p>
-      <textarea name="message" maxlength="${CAPTION_MAX}" placeholder="Say something about your ${mediaWord}…" style="width: 100%; min-height: 80px; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius-sm); padding: 12px; font-size: 14px; font-family: inherit; resize: vertical; margin-bottom: 20px; background: var(--ugme-bg); color: var(--ugme-fg);"></textarea>
+      <div class="ugme-section-label">${campaign.captionPrompt?.trim() ? `${escapeHtml(campaign.captionPrompt.trim())} <span style="font-weight: 400; color: var(--ugme-muted);">(optional)</span>` : "Caption (optional)"}</div>
+      <p style="font-size: 13px; color: var(--ugme-muted); margin: -4px 0 8px;">${campaign.captionPrompt?.trim() ? "Your answer shows with your post on the wall." : "Shown with your post on the wall."}</p>
+      <textarea name="message" maxlength="${CAPTION_MAX}" placeholder="${campaign.captionPrompt?.trim() ? "Your answer…" : `Say something about your ${mediaWord}…`}" style="width: 100%; min-height: 80px; border: 1px solid var(--ugme-border); border-radius: var(--ugme-radius-sm); padding: 12px; font-size: 14px; font-family: inherit; resize: vertical; margin-bottom: 20px; background: var(--ugme-bg); color: var(--ugme-fg);"></textarea>
 
       <!-- Terms agreement -->
       <div style="background: var(--ugme-surface); border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 24px;">

@@ -14,6 +14,7 @@
 import prisma from "../db.server";
 import { extractKeyFromContentUrl, getCacheableDownloadUrl } from "./r2.server";
 import { MAX_POST_PRODUCTS, parseProducts } from "./wall-campaigns.server";
+import { contentWord, hasReward, wallRewardOffer } from "./wall-campaigns";
 import { PROXY_BASE } from "./proxy-path";
 import { publicUrlForKey, wallJsonUrl } from "./public-media.server";
 
@@ -36,8 +37,10 @@ export type CanvasItem = {
   author: string | null;
   /** The customer's caption, shown with the post */
   message: string | null;
-  /** Every post comes from a verified buyer */
-  verified: true;
+  /** Customer posts come from verified buyers; brand posts don't */
+  verified: boolean;
+  /** The merchant's own post ("From the brand") */
+  brand?: boolean;
   /** Products this buyer purchased (product cards in the viewer) */
   products: CanvasProduct[];
 };
@@ -50,6 +53,12 @@ export type CanvasWall = {
   shareUrl: string;
   /** Spots left under the wall's submission limit (null = no limit). 0 → hide "Share yours". */
   spotsLeft: number | null;
+  /** The reward in words ("10% off your next order"); null when posts only get featured */
+  offer?: string | null;
+  /** "photo" | "video" | "photo or video" */
+  contentWord?: string;
+  /** The wall's product when it has exactly one (for "Bought <product>?") */
+  productTitle?: string | null;
 };
 
 async function resolveUrl(url: string | null | undefined): Promise<string | null> {
@@ -93,6 +102,7 @@ export async function getCanvasMedia(
       products: true,
       description: true,
       showCaption: true,
+      fromBrand: true,
     },
     orderBy: { createdAt: "desc" },
     take: MAX_ITEMS,
@@ -112,10 +122,11 @@ export async function getCanvasMedia(
         thumb,
         width: null,
         height: null,
-        caption: s.displayName ? `${s.displayName} · Verified buyer` : "Verified buyer",
-        author: s.displayName || null,
+        caption: s.fromBrand ? "From the brand" : s.displayName ? `${s.displayName} · Verified buyer` : "Verified buyer",
+        author: s.fromBrand ? null : s.displayName || null,
         message: s.description && s.showCaption ? s.description.slice(0, 300) : null,
-        verified: true,
+        verified: !s.fromBrand,
+        brand: s.fromBrand || undefined,
         products,
       };
     }),
@@ -136,15 +147,28 @@ function productGid(v: string | null): string | null {
 /** Everything one wall shows: its status + approved posts. Also written to public/walls/<id>.json. */
 export async function buildWallPayload(shopId: string, wallId: string, opts: { productId?: string | null } = {}) {
   let wall: CanvasWall | null = null;
-  const c = await prisma.campaign.findFirst({ where: { id: wallId, shopId }, select: { id: true, title: true, status: true, maxSubmissions: true } });
+  const c = await prisma.campaign.findFirst({
+    where: { id: wallId, shopId },
+    select: {
+      id: true, title: true, status: true, maxSubmissions: true, contentType: true, productScope: true, products: true,
+      rewardType: true, discountCodeType: true, discountCodeAmount: true, storeCreditAmount: true,
+    },
+  });
   if (c) {
-    const used = c.maxSubmissions == null ? 0 : await prisma.submission.count({ where: { campaignId: c.id, status: { not: "REJECTED" } } });
+    // Brand posts don't use up customer spots
+    const used = c.maxSubmissions == null ? 0 : await prisma.submission.count({ where: { campaignId: c.id, status: { not: "REJECTED" }, fromBrand: false } });
     wall = {
       id: c.id,
       title: c.title,
       active: c.status === "ACTIVE",
       shareUrl: `${PROXY_BASE}/campaign/${c.id}/submit`,
       spotsLeft: c.maxSubmissions == null ? null : Math.max(0, c.maxSubmissions - used),
+      offer: hasReward(c) ? wallRewardOffer(c) : null,
+      contentWord: contentWord(c.contentType),
+      productTitle: (() => {
+        const ps = c.productScope === "ALL" ? [] : parseProducts(c.products);
+        return ps.length === 1 ? ps[0].title : null;
+      })(),
     };
   }
   const items = wall?.active ? await getCanvasMedia(shopId, [wallId], opts) : [];

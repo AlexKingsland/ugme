@@ -7,6 +7,8 @@ export type WallForm = {
   title: string;
   moment: string;
   checklist: string[];
+  /** Optional question for customers; their answer is shown with the post */
+  question?: string;
   contentType: "VIDEO" | "PHOTO" | "ANY";
   productScope: "SPECIFIC" | "ALL";
   products: WallProduct[];

@@ -33,3 +33,6 @@ pnpm-lock.yaml
 
 # Generated per app by scripts/block-app-id.mjs (template: scripts/templates/ugme-canvas.block.liquid)
 /extensions/ugme-canvas/blocks/ugme-canvas.liquid
+
+# copied from the theme extension by scripts/sync-demo-bundle.mjs
+public/demo-wall/ugme-canvas.js

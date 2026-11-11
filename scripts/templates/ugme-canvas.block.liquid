@@ -53,6 +53,14 @@
   data-background="{{ block.settings.background }}"
   data-show-hint="{{ block.settings.show_hint }}"
   data-design-mode="{{ request.design_mode }}"
+  data-min-posts="{{ block.settings.min_posts }}"
+  data-below-min="{{ block.settings.below_min }}"
+  data-banner-text="{{ block.settings.banner_text | escape }}"
+  data-product-title="{% if product %}{{ product.title | escape }}{% endif %}"
+  data-center-heading="{{ block.settings.center_heading | escape }}"
+  data-center-subtext="{{ block.settings.center_subtext | escape }}"
+  data-center-color="{{ block.settings.center_color }}"
+  data-center-backdrop="{{ block.settings.center_backdrop }}"
   data-bundle="{{ 'ugme-canvas.js' | asset_url }}"
   aria-label="{{ block.settings.heading | default: 'Customer content' | escape }}"
   role="region"
@@ -112,7 +120,65 @@
       "type": "checkbox",
       "id": "this_product_only",
       "label": "On product pages, only show posts of that product",
-      "default": false
+      "default": false,
+      "info": "If a product has too few posts, the whole wall is shown instead."
+    },
+    {
+      "type": "header",
+      "content": "While the wall is new"
+    },
+    {
+      "type": "range",
+      "id": "min_posts",
+      "label": "Show the wall once it has this many posts",
+      "min": 0,
+      "max": 10,
+      "step": 1,
+      "default": 3,
+      "info": "Until then shoppers see the option below. 0 shows the wall straight away."
+    },
+    {
+      "type": "select",
+      "id": "below_min",
+      "label": "Before that, show",
+      "options": [
+        { "value": "banner", "label": "A banner inviting buyers to share" },
+        { "value": "hide", "label": "Nothing (hide the block)" }
+      ],
+      "default": "banner"
+    },
+    {
+      "type": "text",
+      "id": "banner_text",
+      "label": "Banner text",
+      "info": "Leave blank to use the wall's reward, e.g. “Share a photo and get 10% off your next order.”"
+    },
+    {
+      "type": "header",
+      "content": "Center text"
+    },
+    {
+      "type": "text",
+      "id": "center_heading",
+      "label": "Heading",
+      "info": "Shown in the middle of the wall. It fades while shoppers explore. Leave blank for none."
+    },
+    {
+      "type": "text",
+      "id": "center_subtext",
+      "label": "Subheading"
+    },
+    {
+      "type": "color",
+      "id": "center_color",
+      "label": "Text colour",
+      "default": "#111111"
+    },
+    {
+      "type": "checkbox",
+      "id": "center_backdrop",
+      "label": "Soft panel behind the text",
+      "default": true
     },
     {
       "type": "header",

@@ -59,7 +59,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     where: { id: params.id },
     include: {
       customer: { select: { email: true } },
-      campaign: { select: { id: true, title: true, moment: true, status: true, productScope: true, products: true, captureSpecs: true, productId: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true, storeCreditAmount: true, shopId: true } },
+      campaign: { select: { id: true, title: true, moment: true, captionPrompt: true, status: true, productScope: true, products: true, captureSpecs: true, productId: true, rewardCycles: true, rewardFrequency: true, discountType: true, discountValue: true, rewardType: true, discountCodeType: true, discountCodeAmount: true, storeCreditAmount: true, shopId: true } },
       reward: { select: { status: true, cycles: true } },
     },
   });
@@ -121,6 +121,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       durationSecs: submission.durationSecs,
       description: submission.description,
       showCaption: submission.showCaption,
+      fromBrand: submission.fromBrand,
+      captionPrompt: submission.campaign.captionPrompt,
       fileBytes: submission.fileBytes,
       status: submission.status,
       createdAt: submission.createdAt,
@@ -158,7 +160,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     nextPendingId: nextPending?.id || null,
     approvals: await (async () => {
       const a = await checkSubmissionLimit(shop.id, (shop.planTier as PlanTierKey) || "FREE");
-      return { used: a.used, limit: Number.isFinite(a.limit) ? a.limit : null, reached: !a.ok };
+      return { used: a.used, limit: Number.isFinite(a.limit) ? a.limit : null, reached: !a.ok, period: a.period };
     })(),
   });
 };
@@ -302,7 +304,7 @@ export default function SubmissionDetail() {
   return (
     <Page
       backAction={{ content: "Submissions", url: "/app/library" }}
-      title={`Submission from ${submission.displayName}`}
+      title={submission.fromBrand ? "Your post" : `Submission from ${submission.displayName}`}
       titleMetadata={
         <Badge tone={isPending ? "attention" : submission.status === "APPROVED" ? "success" : "critical"}>
           {isPending ? "DECIDE" : submission.status}
@@ -373,7 +375,9 @@ export default function SubmissionDetail() {
                 <div style={{ background: "var(--p-color-bg-surface-secondary)", borderRadius: 10, padding: "10px 12px" }}>
                   <BlockStack gap="200">
                     <BlockStack gap="100">
-                      <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Customer's caption</Text>
+                      <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">
+                        {submission.captionPrompt ? `Their answer to “${submission.captionPrompt}”` : "Customer's caption"}
+                      </Text>
                       <div style={{ opacity: showCaption ? 1 : 0.55 }}>
                         <Text as="p" variant="bodyMd">{submission.description}</Text>
                       </div>
@@ -407,7 +411,9 @@ export default function SubmissionDetail() {
                   </Text>
                   {approvals.reached && (
                     <Banner tone="warning" action={{ content: "Upgrade plan", url: "/app/settings/billing" }}>
-                      You've approved {approvals.used} of {approvals.limit} submissions this month. Upgrade to approve this one now, or approve it next month.
+                      {approvals.period === "total"
+                        ? `You've approved ${approvals.used} of the ${approvals.limit} posts your plan includes. Upgrade, or delete approved posts you no longer need, to approve this one.`
+                        : `You've approved ${approvals.used} of ${approvals.limit} submissions this month. Upgrade to approve this one now, or approve it next month.`}
                     </Banner>
                   )}
                   {!showDenyPanel ? (
@@ -469,6 +475,14 @@ export default function SubmissionDetail() {
             )}
 
             {/* Who shared it */}
+            {submission.fromBrand ? (
+              <Card>
+                <BlockStack gap="200">
+                  <Badge>From the brand</Badge>
+                  <Text as="p" variant="bodySm" tone="subdued">You added this post yourself. It shows a “From the brand” label on the wall, and doesn't use up customer spots.</Text>
+                </BlockStack>
+              </Card>
+            ) : (
             <Card>
               <BlockStack gap="400">
                 <InlineStack gap="300" blockAlign="center" wrap={false}>
@@ -535,6 +549,7 @@ export default function SubmissionDetail() {
                 </BlockStack>
               </BlockStack>
             </Card>
+            )}
           </BlockStack>
         </Layout.Section>
 

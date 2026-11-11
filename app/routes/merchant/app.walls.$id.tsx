@@ -41,6 +41,7 @@ import type { RewardChoice } from "../../utils/wall-validate";
 const DEFAULTS: WallForm = {
   title: "",
   moment: "",
+  question: "",
   checklist: [],
   contentType: "VIDEO",
   productScope: "SPECIFIC",
@@ -79,6 +80,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const form: WallForm = {
     title: c.title,
     moment: c.moment,
+    question: c.captionPrompt ?? "",
     checklist: checklistFrom(c.captureSpecs),
     contentType: c.contentType,
     productScope: c.productScope === "ALL" ? "ALL" : "SPECIFIC",
@@ -157,6 +159,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const data = {
     title: f.title.trim(),
     moment: f.moment.trim(),
+    captionPrompt: (f.question || "").trim().slice(0, 140) || null,
     contentType: f.contentType,
     captureSpecs: JSON.stringify(f.checklist.map((d) => d.trim()).filter(Boolean).map((d) => ({ label: "Requirement", description: d }))),
     productScope: f.productScope,
@@ -496,7 +499,17 @@ export default function WallCampaignEditor() {
                   maxLength={500}
                   showCharacterCount
                 />
-                <AskIdeas onPick={(ask) => set("moment", ask)} />
+                <AskIdeas onPick={(ask) => set("moment", ask)} onPickQuestion={(q) => set("question", q)} />
+                <TextField
+                  label="Question for customers (optional)"
+                  value={f.question || ""}
+                  onChange={(v) => set("question", v)}
+                  autoComplete="off"
+                  placeholder="e.g. What's your go-to drink with it?"
+                  helpText="Customers answer it when they share, and their answer shows with their post on the wall. Leave blank for a plain caption box."
+                  maxLength={140}
+                  showCharacterCount
+                />
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd" fontWeight="medium">Checklist (optional)</Text>
                   {f.checklist.map((item, i) => (
@@ -676,6 +689,9 @@ export default function WallCampaignEditor() {
                     {f.checklist.map((c, i) => (
                       <Text as="p" key={i} tone="subdued" variant="bodySm">• {c}</Text>
                     ))}
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      {f.question?.trim() ? `Question: ${f.question.trim()}` : "Caption: customers can add one"}
+                    </Text>
                   </BlockStack>
                 </ReviewRow>
                 <ReviewRow label="Reward" onEdit={() => goTo(0)}>
@@ -756,6 +772,11 @@ export default function WallCampaignEditor() {
                     )}
                   </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">In the theme editor, choose “{f.title || "this wall campaign"}” in the block's Wall campaign setting.</Text>
+                  <Divider />
+                  <Text as="p" variant="bodySm">New wall looking empty? Add a few of your own posts to get it started.</Text>
+                  <InlineStack>
+                    <Button url={`/app/walls/${id}/posts`}>Add your own posts</Button>
+                  </InlineStack>
                 </BlockStack>
               </Card>
             )}
@@ -767,7 +788,7 @@ export default function WallCampaignEditor() {
 }
 
 /** "Need ideas?" — example asks by kind of store; picking one fills "Your ask". */
-function AskIdeas({ onPick }: { onPick: (ask: string) => void }) {
+function AskIdeas({ onPick, onPickQuestion }: { onPick: (ask: string) => void; onPickQuestion: (q: string) => void }) {
   const [open, setOpen] = useState(false);
   const [group, setGroup] = useState(ASK_IDEAS[0].id);
   const current = ASK_IDEAS.find((g) => g.id === group) ?? ASK_IDEAS[0];
@@ -803,7 +824,13 @@ function AskIdeas({ onPick }: { onPick: (ask: string) => void }) {
             </div>
           ))}
         </BlockStack>
-        <Text as="p" variant="bodySm" tone="subdued">Picking one fills in your ask. You can edit it after.</Text>
+        <Text as="p" variant="bodySm" tone="subdued" fontWeight="medium">Example questions</Text>
+        <InlineStack gap="200" wrap>
+          {current.questions.map((q) => (
+            <Button key={q} size="slim" onClick={() => onPickQuestion(q)}>{`+ ${q}`}</Button>
+          ))}
+        </InlineStack>
+        <Text as="p" variant="bodySm" tone="subdued">Picking an ask or a question fills it in. You can edit it after.</Text>
       </BlockStack>
     </div>
   );

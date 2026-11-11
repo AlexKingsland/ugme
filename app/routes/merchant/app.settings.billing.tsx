@@ -57,6 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       used: submissions.used,
       limit: submissions.limit,
       pct: submissions.pct,
+      period: submissions.period,
     },
     plans: Object.values(PLAN_DEFINITIONS).filter((p) => !p.hidden || p.key === planTier),
   });
@@ -266,7 +267,7 @@ export default function BillingPage() {
                 <BlockStack gap="200">
                   <InlineStack align="space-between">
                     <Text as="span" variant="bodySm" fontWeight="semibold">
-                      Approved this month
+                      {submissions.period === "total" ? "Approved posts" : "Approved this month"}
                     </Text>
                     <Text as="span" variant="bodySm" tone="subdued">
                       {submissions.used} / {submissions.limit == null || submissions.limit === Infinity ? "∞" : submissions.limit}
