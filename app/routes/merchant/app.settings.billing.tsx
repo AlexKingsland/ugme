@@ -295,6 +295,12 @@ export default function BillingPage() {
           <Text as="h2" variant="headingLg">
             Choose a plan
           </Text>
+          <Box paddingBlockStart="100">
+            <Text as="p" tone="subdued">
+              Each plan has a number of slots (approved posts on your walls) and storage. Your limit is whichever runs out
+              first. Slots never reset, and deleting a post frees its slot.
+            </Text>
+          </Box>
           <Box paddingBlockStart="400">
             <InlineGrid columns={{ xs: 1, md: plans.length }} gap="400">
               {plans.map((p) => (
@@ -359,7 +365,7 @@ function PlanCard({
           </InlineStack>
           <InlineStack gap="200">
             <Text as="span" variant="bodySm" fontWeight="semibold">
-              Approved submissions:
+              Slots:
             </Text>
             <Text as="span" variant="bodySm">
               {plan.submissionLabel}

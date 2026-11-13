@@ -40,7 +40,14 @@ export type SceneHandlers = {
   onFirstInteraction: () => void;
   pausedRef: React.RefObject<boolean>;
   keysRef: React.RefObject<Set<string>>;
+  /** Not entered yet: the wall drifts on its own and ignores input, so the page scrolls normally */
+  idleRef?: React.RefObject<boolean>;
 };
+
+/** Gentle auto-pan while the shopper hasn't entered the wall (world units per frame) */
+const AUTO_PAN = { x: 0.035, y: 0.012 };
+const reducedMotion = () =>
+  typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 // ── Plane ───────────────────────────────────────────────────────
 
@@ -273,7 +280,8 @@ function SceneController({ media, handlers }: { media: MediaItem[]; handlers: Sc
     const canvas = gl.domElement;
     const s = state.current;
     canvas.style.cursor = "grab";
-    const paused = () => handlersRef.current.pausedRef.current;
+    // Before the shopper enters the wall, nothing here reacts: wheel and touch scroll the page
+    const paused = () => handlersRef.current.pausedRef.current || !!handlersRef.current.idleRef?.current;
     let interacted = false;
     const interact = () => {
       if (!interacted) {
@@ -414,8 +422,17 @@ function SceneController({ media, handlers }: { media: MediaItem[]; handlers: Sc
     const s = state.current;
     const now = performance.now();
     const paused = handlersRef.current.pausedRef.current;
+    const idle = !!handlersRef.current.idleRef?.current;
 
-    if (!paused) {
+    if (idle) {
+      // Drift slowly on its own to catch the eye (unless the shopper prefers less motion)
+      s.isDragging = false;
+      s.mouse = { x: 0, y: 0 };
+      if (!reducedMotion()) {
+        s.targetVel.x = AUTO_PAN.x;
+        s.targetVel.y = AUTO_PAN.y;
+      }
+    } else if (!paused) {
       const keys = handlersRef.current.keysRef.current;
       if (keys.size) {
         if (keys.has("forward")) s.targetVel.z -= KEYBOARD_SPEED;
@@ -432,7 +449,7 @@ function SceneController({ media, handlers }: { media: MediaItem[]; handlers: Sc
     const driftAmount = 8.0 * zoomFactor;
     const driftLerp = isZooming ? 0.2 : 0.12;
 
-    if (s.isDragging || paused) {
+    if (s.isDragging || (paused && !idle)) {
       // freeze drift
     } else if (touch) {
       s.drift.x = lerp(s.drift.x, 0, driftLerp);

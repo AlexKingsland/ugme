@@ -5,11 +5,14 @@
 /*
  * Social Wall plans. Every plan includes the full app — the wall (no branding),
  * unlimited wall campaigns, verified-buyer posts, rewards and sales analytics.
- * Plans differ only in approved posts and storage:
+ * Plans differ only in slots (approved posts) and storage — whichever runs out first:
  *
- *   FREE       — $0      2 GB      50 approved in total (never resets; deleting a post frees its slot)
- *   STARTER    — $7.99   10 GB     500 approved / month   (shown as "Standard")
- *   PRO        — $21.99  100 GB    unlimited approvals
+ *   FREE       — $0      2 GB      50 slots
+ *   STARTER    — $7.99   10 GB     1,000 slots   (shown as "Standard")
+ *   PRO        — $21.99  100 GB    10,000 slots
+ *
+ * Slots never reset: they count approved posts that exist, so deleting a post frees its
+ * slot. Storage limits uploads (customer and brand); slots limit approvals.
  *   ENTERPRISE — hidden; assigned by hand for special arrangements
  *
  * The STARTER key is kept (DB enum) — only its display name changed.
@@ -60,7 +63,7 @@ export const PLAN_DEFINITIONS: Record<PlanTierKey, PlanDefinition> = {
     submissionsPerMonth: 50,
     approvalPeriod: "total",
     storageLabel: "2 GB",
-    submissionLabel: "50 in total",
+    submissionLabel: "50 posts",
     features: INCLUDED,
     rank: 0,
   },
@@ -69,10 +72,10 @@ export const PLAN_DEFINITIONS: Record<PlanTierKey, PlanDefinition> = {
     name: "Standard",
     priceMonthly: 7.99,
     storageBytes: 10 * GB,
-    submissionsPerMonth: 500,
-    approvalPeriod: "month",
+    submissionsPerMonth: 1000,
+    approvalPeriod: "total",
     storageLabel: "10 GB",
-    submissionLabel: "500 / month",
+    submissionLabel: "1,000 posts",
     features: INCLUDED,
     rank: 1,
   },
@@ -81,10 +84,10 @@ export const PLAN_DEFINITIONS: Record<PlanTierKey, PlanDefinition> = {
     name: "Pro",
     priceMonthly: 21.99,
     storageBytes: 100 * GB,
-    submissionsPerMonth: Infinity,
-    approvalPeriod: "month",
+    submissionsPerMonth: 10000,
+    approvalPeriod: "total",
     storageLabel: "100 GB",
-    submissionLabel: "Unlimited",
+    submissionLabel: "10,000 posts",
     features: INCLUDED,
     rank: 2,
   },
@@ -94,7 +97,7 @@ export const PLAN_DEFINITIONS: Record<PlanTierKey, PlanDefinition> = {
     priceMonthly: -1,
     storageBytes: Infinity,
     submissionsPerMonth: Infinity,
-    approvalPeriod: "month",
+    approvalPeriod: "total",
     storageLabel: "Unlimited",
     submissionLabel: "Unlimited",
     features: INCLUDED,

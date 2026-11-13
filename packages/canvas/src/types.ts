@@ -48,6 +48,8 @@ export type CanvasOptions = {
   showHint?: boolean;
   /** Theme editor — show friendlier empty states */
   designMode?: boolean;
+  /** Show an "Enter the social wall" button before drag/zoom turn on (default true) */
+  enterToExplore?: boolean;
   /** Show the wall only once it has this many posts (0 = always) */
   minPosts?: number;
   /** Below minPosts: an invitation banner, or nothing */

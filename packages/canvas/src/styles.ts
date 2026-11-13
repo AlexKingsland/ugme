@@ -15,6 +15,20 @@ export const CSS = `
 .ugme-center--hidden{opacity:0;transform:translate(-50%,-50%) scale(.97)}
 .ugme-center__heading{margin:0;font-size:clamp(26px,4.6vw,58px);line-height:1.04;font-weight:700;letter-spacing:-.02em;color:inherit}
 .ugme-center__sub{margin:10px 0 0;font-size:clamp(14px,1.5vw,18px);line-height:1.4;opacity:.75;color:inherit}
+.ugme-canvas--idle,.ugme-canvas--idle .ugme-canvas__gl,.ugme-canvas--idle canvas{touch-action:pan-y pinch-zoom!important}
+.ugme-enter{position:absolute;inset:0;z-index:1;display:flex;align-items:flex-end;justify-content:center;padding:0 16px 22px;margin:0;
+  border:0;background:transparent;cursor:pointer;touch-action:pan-y pinch-zoom;-webkit-tap-highlight-color:transparent;font:inherit}
+.ugme-enter__pill{display:inline-flex;align-items:center;gap:8px;height:46px;padding:0 20px 0 22px;border-radius:999px;background:#111;color:#fff;
+  font-size:15px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.22);transition:transform .15s ease,box-shadow .15s ease}
+.ugme-enter__pill svg{width:17px;height:17px;transition:transform .15s ease}
+.ugme-enter:hover .ugme-enter__pill,.ugme-enter:focus-visible .ugme-enter__pill{transform:translateY(-1px);box-shadow:0 12px 28px rgba(0,0,0,.26)}
+.ugme-enter:hover .ugme-enter__pill svg{transform:translateX(3px)}
+.ugme-enter:focus-visible{outline:none}
+.ugme-enter:focus-visible .ugme-enter__pill{outline:2px solid #fff;outline-offset:2px}
+.ugme-canvas__exit{position:absolute;top:12px;right:56px;z-index:2;display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px 0 11px;
+  border-radius:999px;border:0;background:rgba(255,255,255,.92);color:#111;font:600 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  box-shadow:0 1px 6px rgba(0,0,0,.18);cursor:pointer}
+.ugme-canvas__exit svg{width:14px;height:14px}
 .ugme-canvas--full{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;z-index:2147483000}
 .ugme-canvas__gl{position:absolute!important;inset:0;width:100%;height:100%;touch-action:none}
 .ugme-canvas__gl canvas{display:block;touch-action:none}

@@ -28,6 +28,18 @@ const ShareIcon = () => (
   </svg>
 );
 
+const ArrowIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </svg>
+);
+
+const CloseIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+
 const ExpandIcon = ({ full }: { full: boolean }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     {full ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
@@ -74,6 +86,12 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
   const [progress, setProgress] = React.useState<{ loaded: number; total: number } | null>(null);
   const [hintVisible, setHintVisible] = React.useState(options.showHint !== false);
   const [full, setFull] = React.useState(false);
+  // "Enter the wall": until the shopper chooses to explore, the wall drifts on its own and
+  // scrolling over it scrolls the page. Entering turns on drag/zoom; Exit (or Esc, or
+  // scrolling it out of view) hands scrolling back to the page.
+  const [entered, setEntered] = React.useState(options.enterToExplore === false);
+  const idleRef = React.useRef(!entered);
+  idleRef.current = !entered;
   // The wall's submission limit is reached → no "Share yours" button
   const [wallFull, setWallFull] = React.useState(false);
   // Theme editor + no approved posts yet → sample posts, so the merchant sees the wall
@@ -199,7 +217,7 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
       const k = KEY_MAP[e.key.toLowerCase()];
-      if (!k || pausedRef.current) return;
+      if (!k || pausedRef.current || idleRef.current) return;
       e.preventDefault();
       keysRef.current.add(k);
     };
@@ -216,6 +234,43 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
       root.removeEventListener("keyup", up);
       root.removeEventListener("blur", blur, true);
     };
+  }, [root]);
+
+  // ── entering / leaving the wall ──
+  React.useEffect(() => {
+    root.classList.toggle("ugme-canvas--idle", !entered);
+    if (!entered) {
+      keysRef.current.clear();
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !pausedRef.current && !full) setEntered(false);
+    };
+    window.addEventListener("keydown", onKey);
+    // Scrolled (mostly) out of view → back to page scrolling
+    let io: IntersectionObserver | null = null;
+    if ("IntersectionObserver" in window && !full) {
+      io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((en) => en.intersectionRatio < 0.25) && !pausedRef.current) setEntered(false);
+        },
+        { threshold: [0, 0.25] },
+      );
+      io.observe(root);
+    }
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      io?.disconnect();
+    };
+  }, [entered, full, root]);
+
+  const enter = React.useCallback(() => {
+    setEntered(true);
+    try {
+      root.focus({ preventScroll: true });
+    } catch {
+      /* older browsers */
+    }
   }, [root]);
 
   // ── fullscreen toggle ──
@@ -244,6 +299,7 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
     () => ({
       pausedRef,
       keysRef,
+      idleRef,
       onFirstInteraction: () => setHintVisible(false),
       onPrefetch: (item) => pool.prefetch(item.src),
       onSelect: (item, origin) => {
@@ -370,9 +426,25 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
                 : `Shoppers see a banner instead until this wall has ${belowNote} posts`}
             </div>
           ) : (
+            entered &&
             options.showHint !== false && (
               <div className={`ugme-canvas__chip${hintVisible ? "" : " ugme-canvas__chip--hidden"}`}>{hint}</div>
             )
+          )}
+          {!entered && (
+            // The whole wall is the button; scrolling over it still scrolls the page
+            <button type="button" className="ugme-enter" onClick={enter} aria-label="Enter the social wall">
+              <span className="ugme-enter__pill">
+                Enter the social wall
+                <ArrowIcon />
+              </span>
+            </button>
+          )}
+          {entered && !full && options.enterToExplore !== false && (
+            <button type="button" className="ugme-canvas__exit" onClick={() => setEntered(false)}>
+              <CloseIcon />
+              <span>Exit</span>
+            </button>
           )}
           {options.share && options.shareUrl && !wallFull && (
             <a className="ugme-canvas__share" href={options.shareUrl}>
@@ -384,7 +456,10 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
             type="button"
             className="ugme-canvas__btn"
             aria-label={full ? "Exit full screen" : "Full screen"}
-            onClick={() => setFull((f) => !f)}
+            onClick={() => {
+              if (!full) setEntered(true); // full screen means exploring
+              setFull((f) => !f);
+            }}
           >
             <ExpandIcon full={full} />
           </button>

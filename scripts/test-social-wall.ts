@@ -500,17 +500,15 @@ section("Approval limits + downloads");
   const { checkPlanGates, checkSubmissionLimit } = await import("../app/utils/plans.server");
   const { mediaUrlsFor } = await import("../app/utils/submission-media.server");
   const cust = await prisma.customer.findFirst({ where: { shopId: shopRow.id, shopifyCustomerId: "111" } });
-  // an approval from two months ago: counts on Free (total), not on Standard (monthly)
+  // an approval from two months ago still uses a slot on every plan (slots never reset)
   const old = await prisma.submission.create({ data: { campaignId: wallNone.id, customerId: cust!.id, status: "APPROVED", reviewedAt: new Date(Date.now() - 62 * 864e5), contentType: "VIDEO", contentUrl: "https://example.com/old.mp4", rightsAccepted: true } });
-  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const approvedThisMonth = await prisma.submission.count({ where: { campaign: { shopId: shopRow.id }, status: "APPROVED", reviewedAt: { gte: monthStart } } });
   const approvedAll = await prisma.submission.count({ where: { campaign: { shopId: shopRow.id }, status: "APPROVED" } });
   const std = await checkSubmissionLimit(shopRow.id, "STARTER");
-  check("Standard: 500 a month, counts only approvals this month", std.limit === 500 && std.period === "month" && std.used === approvedThisMonth, std);
+  check("Standard: 1,000 slots, counting every approved post", std.limit === 1000 && std.period === "total" && std.used === approvedAll, std);
   const pro = await checkSubmissionLimit(shopRow.id, "PRO");
-  check("Pro: unlimited approvals", pro.limit === Infinity && pro.ok);
+  check("Pro: 10,000 slots", pro.limit === 10000 && pro.ok);
   const free = await checkSubmissionLimit(shopRow.id, "FREE");
-  check("Free: 50 in total, counting every approved post", free.limit === 50 && free.period === "total" && free.used === approvedAll, free);
+  check("Free: 50 slots, counting every approved post", free.limit === 50 && free.period === "total" && free.used === approvedAll, free);
   await prisma.submission.delete({ where: { id: old.id } });
   const freeAfter = await checkSubmissionLimit(shopRow.id, "FREE");
   check("Free: deleting an approved post frees its slot", freeAfter.used === approvedAll - 1, freeAfter);
