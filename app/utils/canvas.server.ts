@@ -49,9 +49,9 @@ export type CanvasWall = {
   id: string;
   title: string;
   active: boolean;
-  /** Customer submit page for the "Share yours" button */
+  /** Customer submit page for the "Get featured" button */
   shareUrl: string;
-  /** Spots left under the wall's submission limit (null = no limit). 0 → hide "Share yours". */
+  /** Spots left under the wall's submission limit (null = no limit). 0 → hide "Get featured". */
   spotsLeft: number | null;
   /** The reward in words ("10% off your next order"); null when posts only get featured */
   offer?: string | null;

@@ -34,17 +34,24 @@ const ArrowIcon = () => (
   </svg>
 );
 
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+// clip-path that crops the viewport down to a rect (where the wall sits on the page)
+const insetFor = (r: DOMRect) => {
+  const t = Math.max(0, r.top);
+  const l = Math.max(0, r.left);
+  const rt = Math.max(0, window.innerWidth - r.right);
+  const b = Math.max(0, window.innerHeight - r.bottom);
+  return `inset(${t}px ${rt}px ${b}px ${l}px round 12px)`;
+};
+
 const CloseIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
     <path d="M6 6l12 12M18 6L6 18" />
   </svg>
 );
 
-const ExpandIcon = ({ full }: { full: boolean }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {full ? <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /> : <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />}
-  </svg>
-);
 
 type LoadState =
   | { status: "loading" }
@@ -264,8 +271,34 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
     };
   }, [entered, full, root]);
 
+  // Entering the wall opens it full screen; leaving closes full screen too.
+  // The wall grows out of (and shrinks back into) its spot on the page.
+  const gated = options.enterToExplore !== false;
+  const placeholderRef = React.useRef<HTMLDivElement | null>(null);
+  const closeAnimRef = React.useRef<Animation | null>(null);
+  const leave = React.useCallback(() => {
+    if (closeAnimRef.current) return; // already closing
+    const finish = () => {
+      setFull(false);
+      if (gated) setEntered(false);
+    };
+    const ph = placeholderRef.current;
+    if (!ph || prefersReducedMotion() || typeof root.animate !== "function") return finish();
+    const anim = root.animate([{ clipPath: "inset(0px 0px 0px 0px round 0px)" }, { clipPath: insetFor(ph.getBoundingClientRect()) }], {
+      duration: 380,
+      easing: "cubic-bezier(.4,0,.2,1)",
+      fill: "forwards",
+    });
+    closeAnimRef.current = anim;
+    anim.onfinish = finish;
+  }, [gated, root]);
+  const leaveRef = React.useRef(leave);
+  leaveRef.current = leave;
+  const [fsNote, setFsNote] = React.useState(false);
+
   const enter = React.useCallback(() => {
     setEntered(true);
+    setFull(true);
     try {
       root.focus({ preventScroll: true });
     } catch {
@@ -273,15 +306,39 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
     }
   }, [root]);
 
-  // ── fullscreen toggle ──
+  // ── fullscreen ──
   React.useEffect(() => {
-    root.classList.toggle("ugme-canvas--full", full);
     if (!full) return;
+    const rect = root.getBoundingClientRect();
+    // Hold the wall's space on the page so nothing jumps while it's full screen
+    const ph = document.createElement("div");
+    ph.setAttribute("aria-hidden", "true");
+    // (themes like Dawn hide empty divs, so force it visible)
+    ph.style.setProperty("display", "block", "important");
+    ph.style.height = `${rect.height}px`;
+    root.parentNode?.insertBefore(ph, root);
+    placeholderRef.current = ph;
+    root.classList.add("ugme-canvas--full");
     const prev = document.documentElement.style.overflow;
     document.documentElement.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !pausedRef.current && setFull(false);
+    if (!prefersReducedMotion() && typeof root.animate === "function") {
+      root.animate([{ clipPath: insetFor(rect) }, { clipPath: "inset(0px 0px 0px 0px round 0px)" }], {
+        duration: 480,
+        easing: "cubic-bezier(.22,.8,.24,1)",
+      });
+    }
+    setFsNote(true);
+    const noteTimer = window.setTimeout(() => setFsNote(false), 4500);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !pausedRef.current && leaveRef.current();
     window.addEventListener("keydown", onKey);
     return () => {
+      window.clearTimeout(noteTimer);
+      setFsNote(false);
+      closeAnimRef.current?.cancel();
+      closeAnimRef.current = null;
+      root.classList.remove("ugme-canvas--full");
+      ph.remove();
+      placeholderRef.current = null;
       document.documentElement.style.overflow = prev;
       window.removeEventListener("keydown", onKey);
     };
@@ -377,7 +434,7 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
           </div>
           <a className="ugme-empty__cta" href={options.shareUrl}>
             <ShareIcon />
-            <span>{options.shareLabel || "Share yours"}</span>
+            <span>{options.shareLabel || "Get featured"}</span>
           </a>
         </div>
       )}
@@ -399,14 +456,14 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
             {options.share && options.shareUrl && !wallFull && (
               <a className="ugme-empty__cta" href={options.shareUrl}>
                 <ShareIcon />
-                <span>{options.shareLabel || "Share yours"}</span>
+                <span>{options.shareLabel || "Get featured"}</span>
               </a>
             )}
           </div>
         </div>
       )}
 
-      {state.status === "ready" && state.media.length > 0 && revealed && hasCenter && (
+      {state.status === "ready" && state.media.length > 0 && revealed && hasCenter && entered && (
         <div
           className={`ugme-center${options.centerBackdrop !== false ? " ugme-center--backdrop" : ""}${moving || selected ? " ugme-center--hidden" : ""}`}
           style={options.centerColor ? { color: options.centerColor } : undefined}
@@ -433,36 +490,40 @@ export function UgmeCanvasApp({ options, root }: { options: CanvasOptions; root:
           )}
           {!entered && (
             // The whole wall is the button; scrolling over it still scrolls the page
+            // Center text (if any) sits above the button, so the two read as one invitation
             <button type="button" className="ugme-enter" onClick={enter} aria-label="Enter the social wall">
+              {hasCenter && (
+                <span
+                  className={`ugme-center ugme-center--static${options.centerBackdrop !== false ? " ugme-center--backdrop" : ""}`}
+                  style={options.centerColor ? { color: options.centerColor } : undefined}
+                >
+                  {options.centerHeading?.trim() && <span className="ugme-center__heading">{options.centerHeading.trim()}</span>}
+                  {options.centerSubtext?.trim() && <span className="ugme-center__sub">{options.centerSubtext.trim()}</span>}
+                </span>
+              )}
               <span className="ugme-enter__pill">
                 Enter the social wall
                 <ArrowIcon />
               </span>
             </button>
           )}
-          {entered && !full && options.enterToExplore !== false && (
-            <button type="button" className="ugme-canvas__exit" onClick={() => setEntered(false)}>
-              <CloseIcon />
-              <span>Exit</span>
-            </button>
+          {full && (
+            <>
+              <div className={`ugme-canvas__fsnote${fsNote ? "" : " ugme-canvas__fsnote--hidden"}`} role="status">
+                You’re in full screen · click <b>Exit</b> or press <b>Esc</b> to leave
+              </div>
+              <button type="button" className="ugme-canvas__exit" onClick={leave}>
+                <CloseIcon />
+                <span>Exit full screen</span>
+              </button>
+            </>
           )}
           {options.share && options.shareUrl && !wallFull && (
             <a className="ugme-canvas__share" href={options.shareUrl}>
               <ShareIcon />
-              <span>{options.shareLabel || "Share yours"}</span>
+              <span>{options.shareLabel || "Get featured"}</span>
             </a>
           )}
-          <button
-            type="button"
-            className="ugme-canvas__btn"
-            aria-label={full ? "Exit full screen" : "Full screen"}
-            onClick={() => {
-              if (!full) setEntered(true); // full screen means exploring
-              setFull((f) => !f);
-            }}
-          >
-            <ExpandIcon full={full} />
-          </button>
         </>
       )}
 

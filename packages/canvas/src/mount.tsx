@@ -5,7 +5,7 @@
  *
  * Options default to the element's data attributes, which the theme block sets:
  *   data-endpoint="/apps/social-wall/canvas"  data-wall="<wall campaign id>"  data-product="123"
- *   data-share="true" data-share-label="Share yours" data-share-url="…"  data-show-products="true"
+ *   data-share="true" data-share-label="Get featured" data-share-url="…"  data-show-products="true"
  *   data-background="#ffffff"  data-show-hint="true"  data-design-mode="true"
  */
 import { createRoot } from "react-dom/client";
@@ -26,7 +26,8 @@ function optionsFromDataset(el: HTMLElement): CanvasOptions {
     wall: d.wall || undefined,
     product: d.product || undefined,
     share: d.share !== "false" && !!d.shareUrl,
-    shareLabel: d.shareLabel || "Share yours",
+    // "Share yours" was the old default label; blocks that still carry it get the new one
+    shareLabel: d.shareLabel && d.shareLabel !== "Share yours" ? d.shareLabel : "Get featured",
     shareUrl: d.shareUrl || undefined,
     showProducts: d.showProducts !== "false",
     background: d.background || undefined,

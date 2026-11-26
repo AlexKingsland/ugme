@@ -10,6 +10,7 @@ export default [
     layout("routes/merchant/app.tsx", [
       index("routes/merchant/app._index.tsx"),
       route("walls", "routes/merchant/app.walls.tsx"),
+      route("walls/share-preview", "routes/merchant/app.walls.share-preview.tsx"),
       route("walls/:id", "routes/merchant/app.walls.$id.tsx"),
       route("walls/:id/posts", "routes/merchant/app.walls.$id.posts.tsx", { id: "brand-posts" }),
       // old links → wall campaigns

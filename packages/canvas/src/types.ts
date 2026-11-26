@@ -36,7 +36,7 @@ export type CanvasOptions = {
   wall?: string;
   /** Product page filter: only posts of this product (numeric id or GID) */
   product?: string;
-  /** "Share yours" button */
+  /** "Get featured" button (opens the customer share page) */
   share?: boolean;
   shareLabel?: string;
   shareUrl?: string;

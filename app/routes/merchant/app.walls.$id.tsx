@@ -752,21 +752,7 @@ export default function WallCampaignEditor() {
                 </BlockStack>
               </Card>
             )}
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">Customers see</Text>
-                <Badge tone="success">{offer}</Badge>
-                <Text as="p" tone="subdued" variant="bodySm">
-                  {f.productScope === "ALL"
-                    ? "For anyone who has ordered from your store."
-                    : f.products.length
-                      ? `For verified buyers of ${f.products.map((p) => p.title).join(", ")}.`
-                      : "Pick products to choose who can share."}
-                </Text>
-                <Divider />
-                <Text as="p" variant="bodySm" tone="subdued">Every approved submission shows a “Verified buyer” badge on the wall. Customers can choose to show their first name.</Text>
-              </BlockStack>
-            </Card>
+            <CustomerPreviewCard form={f} id={id} />
             {!isNew && (
               <Card>
                 <BlockStack gap="200">
@@ -908,5 +894,78 @@ function TopAlignedCheckbox({ id, checked, onChange, children }: { id: string; c
         <Text as="span" variant="bodyMd">{children}</Text>
       </label>
     </div>
+  );
+}
+
+/**
+ * "Customers see": the real customer share page, rendered from the current
+ * (unsaved) form. Refreshes as the merchant edits; uploads are turned off.
+ */
+function CustomerPreviewCard({ form, id }: { form: WallForm; id: string | null }) {
+  const [html, setHtml] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const formKey = JSON.stringify(form);
+  useEffect(() => {
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch("/app/walls/share-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ form, id }),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        const data = (await res.json()) as { html: string };
+        if (alive) {
+          setHtml(data.html);
+          setFailed(false);
+        }
+      } catch {
+        if (alive) setFailed(true);
+      }
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+    // formKey captures every field; `form` itself changes identity on each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formKey, id]);
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingMd">Customers see</Text>
+          <Badge>Preview</Badge>
+        </InlineStack>
+        <div
+          style={{
+            height: 560,
+            borderRadius: 16,
+            overflow: "hidden",
+            border: "1px solid var(--p-color-border)",
+            background: "#fff",
+          }}
+        >
+          {html ? (
+            <iframe
+              title="Customer share page preview"
+              srcDoc={html}
+              // scripts run (file preview, terms toggle) but it can't reach the app or submit
+              sandbox="allow-scripts"
+              style={{ width: "100%", height: "100%", border: 0, display: "block" }}
+            />
+          ) : (
+            <div style={{ height: "100%", display: "grid", placeItems: "center", color: "var(--p-color-text-secondary)", fontSize: 13, padding: 16, textAlign: "center" }}>
+              {failed ? "Couldn't load the preview. It updates when you edit the wall." : "Loading preview…"}
+            </div>
+          )}
+        </div>
+        <Text as="p" variant="bodySm" tone="subdued">
+          The page verified buyers see when they share. It updates as you edit; uploads are turned off here.
+        </Text>
+      </BlockStack>
+    </Card>
   );
 }
