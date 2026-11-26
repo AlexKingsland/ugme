@@ -27,7 +27,7 @@ export function socialWallDetails() {
 
 /** The short version shown next to the checkbox. */
 export function termsSummary(brandName: string): string {
-  return `${brandName} can feature my photo or video on its store, website, social media and ads. I confirm it's mine to share and anyone in it is OK with that. I can ask for it to be removed anytime.`;
+  return `${brandName} can use my photo or video on its store, social media and ads. I have the right to share it, everyone in it has agreed to be featured, and I can ask for it to be taken down anytime.`;
 }
 
 export type TermsBlock = { type: "p"; text: string } | { type: "ul"; items: string[] };

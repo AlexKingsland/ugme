@@ -21,7 +21,7 @@ import {
   Checkbox,
 } from "@shopify/polaris";
 import { TERMS_VERSION, fullTerms, termsSummary } from "../../utils/submission-terms";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../../shopify.server";
@@ -901,10 +901,26 @@ function TopAlignedCheckbox({ id, checked, onChange, children }: { id: string; c
  * "Customers see": the real customer share page, rendered from the current
  * (unsaved) form. Refreshes as the merchant edits; uploads are turned off.
  */
+const PREVIEW_PHONE_WIDTH = 400;
+const PREVIEW_HEIGHT = 560;
+
 function CustomerPreviewCard({ form, id }: { form: WallForm; id: string | null }) {
   const [html, setHtml] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const formKey = JSON.stringify(form);
+  // Lay the page out at phone width, then shrink it to fit the sidebar (a zoomed-out phone view)
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(0.75);
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry.contentRect.width;
+      if (w > 0) setScale(Math.min(1, w / PREVIEW_PHONE_WIDTH));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
@@ -940,8 +956,9 @@ function CustomerPreviewCard({ form, id }: { form: WallForm; id: string | null }
           <Badge>Preview</Badge>
         </InlineStack>
         <div
+          ref={frameRef}
           style={{
-            height: 560,
+            height: PREVIEW_HEIGHT,
             borderRadius: 16,
             overflow: "hidden",
             border: "1px solid var(--p-color-border)",
@@ -954,7 +971,14 @@ function CustomerPreviewCard({ form, id }: { form: WallForm; id: string | null }
               srcDoc={html}
               // scripts run (file preview, terms toggle) but it can't reach the app or submit
               sandbox="allow-scripts"
-              style={{ width: "100%", height: "100%", border: 0, display: "block" }}
+              style={{
+                width: PREVIEW_PHONE_WIDTH,
+                height: PREVIEW_HEIGHT / scale,
+                border: 0,
+                display: "block",
+                transform: `scale(${scale})`,
+                transformOrigin: "top left",
+              }}
             />
           ) : (
             <div style={{ height: "100%", display: "grid", placeItems: "center", color: "var(--p-color-text-secondary)", fontSize: 13, padding: 16, textAlign: "center" }}>
