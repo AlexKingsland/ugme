@@ -61,7 +61,7 @@ export type CanvasOptions = {
   /** Optional text in the middle of the wall (blank = none) */
   centerHeading?: string;
   centerSubtext?: string;
-  /** Center text colour, e.g. "#111111" */
+  /** Center text color, e.g. "#111111" */
   centerColor?: string;
   /** Soft frosted panel behind the center text, for readability */
   centerBackdrop?: boolean;

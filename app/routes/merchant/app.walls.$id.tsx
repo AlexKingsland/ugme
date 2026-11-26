@@ -20,7 +20,7 @@ import {
   List,
   Checkbox,
 } from "@shopify/polaris";
-import { USAGE_RIGHTS_INTRO, usageRightsClauses } from "../../utils/usage-rights";
+import { TERMS_VERSION, fullTerms, termsSummary } from "../../utils/submission-terms";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type * as React from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -69,11 +69,13 @@ function checklistFrom(captureSpecs: string): string[] {
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, redirect } = await authenticate.admin(request);
-  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop }, select: { id: true, brandName: true } });
+  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop }, select: { id: true, brandName: true, supportEmail: true } });
   const brandName = shop?.brandName || session.shop.replace(".myshopify.com", "");
+  // Built on the server: Social Wall's legal details come from the environment
+  const terms = { version: TERMS_VERSION, summary: termsSummary(brandName), full: fullTerms({ brandName, merchantSupportEmail: shop?.supportEmail ?? null }), hasSupportEmail: !!shop?.supportEmail };
   const themeUrl = addToThemeUrl(session.shop, process.env.SHOPIFY_API_KEY || "");
   if (params.id === "new") {
-    return json({ id: null as string | null, status: "DRAFT", form: DEFAULTS, themeUrl, shareUrl: null as string | null, posts: 0, activeSubmissions: 0, legacy: false, brandName });
+    return json({ id: null as string | null, status: "DRAFT", form: DEFAULTS, themeUrl, shareUrl: null as string | null, posts: 0, activeSubmissions: 0, legacy: false, brandName, terms });
   }
   const c = shop ? await prisma.campaign.findFirst({ where: { id: params.id, shopId: shop.id }, include: { _count: { select: { submissions: true } } } }) : null;
   if (!c) throw redirect("/app/walls");
@@ -107,6 +109,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     activeSubmissions,
     legacy: c.rewardType === "SUBSCRIPTION_DISCOUNT",
     brandName,
+    terms,
   });
 };
 
@@ -250,7 +253,7 @@ function ReviewRow({ label, onEdit, children }: { label: string; onEdit: () => v
 }
 
 export default function WallCampaignEditor() {
-  const { id, status, form: initial, themeUrl, shareUrl, posts, activeSubmissions, legacy, brandName } = useLoaderData<typeof loader>();
+  const { id, status, form: initial, themeUrl, shareUrl, posts, activeSubmissions, legacy, brandName, terms } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { errors?: string[]; ok?: boolean; message?: string } | undefined;
   const nav = useNavigation();
   const submit = useSubmit();
@@ -494,7 +497,7 @@ export default function WallCampaignEditor() {
                   onChange={(v) => set("moment", v)}
                   multiline={3}
                   autoComplete="off"
-                  placeholder="Show us how you use it — unboxing, first impressions, or your favourite way to use it."
+                  placeholder="Show us how you use it — unboxing, first impressions, or your favorite way to use it."
                   helpText="Shown to customers when they share, e.g. “Show us your morning routine with it.”"
                   maxLength={500}
                   showCharacterCount
@@ -641,20 +644,27 @@ export default function WallCampaignEditor() {
               <>
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Content usage rights</Text>
+                <Text as="h2" variant="headingMd">Submission Terms</Text>
                 <Text as="p" tone="subdued">
-                  Customers must agree to these terms before they share, so you can use their content across your marketing.
+                  Customers agree to these terms before they share, so you can use their content across your marketing.
+                  This is what they see:
                 </Text>
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                  <BlockStack gap="200">
-                    <Text as="p" fontWeight="semibold">{USAGE_RIGHTS_INTRO}</Text>
-                    {usageRightsClauses(brandName).map((c, i) => (
-                      <Text as="p" key={i}>{`${i + 1}. ${c}`}</Text>
-                    ))}
+                  <BlockStack gap="300">
+                    <Text as="p">
+                      <b>☐ I agree to the Submission Terms.</b> {terms.summary}
+                    </Text>
+                    <TermsDetails terms={terms} />
                   </BlockStack>
                 </Box>
+                {!terms.hasSupportEmail && (
+                  <Banner tone="warning" action={{ content: "Add support email", url: "/app/settings" }}>
+                    Customers are told they can contact you to remove their content. Add a support email in Settings so it
+                    appears in the terms.
+                  </Banner>
+                )}
                 <Checkbox
-                  label="I have reviewed and accept these usage rights for this wall campaign"
+                  label="I've reviewed the Submission Terms and will honor removal requests within the time they promise"
                   checked={f.rightsAccepted}
                   onChange={(v) => set("rightsAccepted", v)}
                 />
@@ -833,5 +843,44 @@ function AskIdeas({ onPick, onPickQuestion }: { onPick: (ask: string) => void; o
         <Text as="p" variant="bodySm" tone="subdued">Picking an ask or a question fills it in. You can edit it after.</Text>
       </BlockStack>
     </div>
+  );
+}
+
+/** "Full terms" toggle, matching what customers see on the share page. */
+function TermsDetails({ terms }: { terms: { version: string; full: { intro: string; sections: { heading: string; blocks: ({ type: "p"; text: string } | { type: "ul"; items: string[] })[] }[] } } }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <BlockStack gap="200">
+      <InlineStack>
+        <Button variant="plain" onClick={() => setOpen((o) => !o)}>{open ? "Hide full terms" : "Full terms"}</Button>
+      </InlineStack>
+      {open && (
+        <div style={{ maxHeight: 360, overflowY: "auto", paddingRight: 8 }}>
+          <BlockStack gap="300">
+            <BlockStack gap="050">
+              <Text as="p" fontWeight="semibold">Submission Terms</Text>
+              <Text as="p" variant="bodySm" tone="subdued">{`Version ${terms.version}`}</Text>
+            </BlockStack>
+            <Text as="p">{terms.full.intro}</Text>
+            {terms.full.sections.map((s) => (
+              <BlockStack key={s.heading} gap="100">
+                <Text as="p" fontWeight="semibold">{s.heading}</Text>
+                {s.blocks.map((b, i) =>
+                  b.type === "p" ? (
+                    <Text as="p" key={i}>{b.text}</Text>
+                  ) : (
+                    <List key={i}>
+                      {b.items.map((item) => (
+                        <List.Item key={item}>{item}</List.Item>
+                      ))}
+                    </List>
+                  ),
+                )}
+              </BlockStack>
+            ))}
+          </BlockStack>
+        </div>
+      )}
+    </BlockStack>
   );
 }

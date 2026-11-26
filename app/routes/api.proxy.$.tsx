@@ -3,7 +3,7 @@ import { recordPixelViews } from "../utils/attribution.server";
 import { canPostUnlimited } from "../utils/test-submitters.server";
 import { parsePixelSeen } from "../utils/attribution";
 import { PROXY_BASE } from "../utils/proxy-path";
-import { USAGE_RIGHTS_INTRO, usageRightsClauses } from "../utils/usage-rights";
+import { TERMS_VERSION, fullTermsHtml, termsSummary } from "../utils/submission-terms";
 import prisma from "../db.server";
 import { verifyProxySignature } from "../utils/proxy-auth.server";
 import { proxyLayout } from "../utils/proxy-layout.server";
@@ -42,6 +42,7 @@ type ShopInfo = {
   providerApiKey: string | null;
   providerConnected: boolean;
   planTier: string;
+  supportEmail: string | null;
 };
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -316,7 +317,7 @@ async function resolveRequest(request: Request) {
 
   const shop = await prisma.shop.findUnique({
     where: { shopDomain },
-    select: { id: true, shopDomain: true, brandName: true, logoUrl: true, accessToken: true, subscriptionProvider: true, providerApiKey: true, providerConnected: true, planTier: true },
+    select: { id: true, shopDomain: true, brandName: true, logoUrl: true, accessToken: true, subscriptionProvider: true, providerApiKey: true, providerConnected: true, planTier: true, supportEmail: true },
   });
 
   if (!shop) {
@@ -841,16 +842,8 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
 
       <!-- Terms agreement -->
       <div style="background: var(--ugme-surface); border-radius: var(--ugme-radius); padding: 16px; margin-bottom: 24px;">
-        <div class="ugme-section-label" style="margin-bottom: 12px;">Rights & terms</div>
+        <div class="ugme-section-label" style="margin-bottom: 12px;">What happens next</div>
         <ul style="list-style: none; padding: 0; margin: 0 0 16px 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--ugme-muted); line-height: 1.5;">
-          <li style="display: flex; gap: 8px;">
-            <span style="flex-shrink: 0;">✓</span>
-            <span>You own this content and have the right to share it.</span>
-          </li>
-          <li style="display: flex; gap: 8px;">
-            <span style="flex-shrink: 0;">✓</span>
-            <span>${escapeHtml(brandName)} may use your ${mediaWord} on their website, social media, and ads.</span>
-          </li>
           <li style="display: flex; gap: 8px;">
             <span style="flex-shrink: 0;">✓</span>
             <span>${hasReward(campaign) ? `If approved, your ${mediaWord} appears on the Social Wall and your reward (${escapeHtml(reward)}) is sent to you by email.` : `If approved, your ${mediaWord} appears on the ${escapeHtml(brandName)} Social Wall.`}</span>
@@ -860,17 +853,16 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
             <span>Posts are usually reviewed within 3–5 business days.</span>
           </li>
         </ul>
-        <details style="margin: -4px 0 14px; font-size: 13px; color: var(--ugme-muted);">
-          <summary style="cursor: pointer; color: var(--ugme-fg); font-weight: 600;">Read the full usage rights</summary>
-          <p style="margin: 10px 0 6px; font-weight: 600; color: var(--ugme-fg);">${escapeHtml(USAGE_RIGHTS_INTRO)}</p>
-          <ol style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5;">
-            ${usageRightsClauses(brandName).map((c) => `<li>${escapeHtml(c)}</li>`).join("")}
-          </ol>
-        </details>
-        <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px; cursor: pointer;">
-          <input type="checkbox" id="termsCheckbox" name="terms" required style="margin-top: 2px; accent-color: var(--ugme-accent); width: 18px; height: 18px; flex-shrink: 0;" />
-          <span>I agree to these terms and grant usage rights for my content.</span>
+        <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.5; cursor: pointer;">
+          <input type="checkbox" id="termsCheckbox" name="terms" required style="margin-top: 3px; accent-color: var(--ugme-accent); width: 18px; height: 18px; flex-shrink: 0;" />
+          <span>I agree to the <b>Submission Terms</b>. ${escapeHtml(termsSummary(brandName))}</span>
         </label>
+        <details style="margin: 12px 0 0 28px; font-size: 13px; color: var(--ugme-muted); line-height: 1.5;">
+          <summary style="cursor: pointer; color: var(--ugme-fg); font-weight: 600;">Full terms</summary>
+          <div style="margin-top: 10px; max-height: 320px; overflow-y: auto; padding-right: 6px;">
+            ${fullTermsHtml({ brandName, merchantSupportEmail: shop.supportEmail }, escapeHtml)}
+          </div>
+        </details>
       </div>
 
       <button type="submit" id="submitBtn" class="ugme-btn ugme-btn--primary" disabled style="opacity: 0.5; cursor: not-allowed;">
@@ -994,6 +986,22 @@ async function handleSubmitForm(campaignId: string, shop: ShopInfo, brandName: s
             uploadError.textContent = "We couldn't open this photo (HEIC). Please choose a JPEG or PNG, or take a screenshot of it.";
             uploadError.style.display = 'block';
             return;
+          }
+          converting = false;
+        } else if ((file.type || '').toLowerCase() === 'image/jpeg' && window.createImageBitmap) {
+          // Re-encode JPEGs so location data (GPS) and other camera metadata are removed
+          // before upload; the browser applies the photo's rotation while drawing.
+          converting = true;
+          updateSubmitState();
+          try {
+            const clean = await bitmapToJpeg(await createImageBitmap(file, { imageOrientation: 'from-image' }));
+            const jpg = new File([clean], file.name, { type: 'image/jpeg', lastModified: Date.now() });
+            const dt = new DataTransfer();
+            dt.items.add(jpg);
+            fileInput.files = dt.files;
+            file = jpg;
+          } catch (e) {
+            console.warn('[social-wall] could not clean photo metadata', e);
           }
           converting = false;
         }
@@ -1556,6 +1564,7 @@ async function receiveFallbackUpload(
       products: JSON.stringify(buyer.products),
       displayName: showName ? await customerDisplayName(shop, customer.shopifyCustomerId || loggedInCustomerId) : null,
       rightsAccepted: true,
+      termsVersion: TERMS_VERSION,
     },
   });
 
@@ -1807,6 +1816,7 @@ async function handleUploadComplete(campaignId: string, shop: ShopInfo, loggedIn
       products: JSON.stringify(pre.products),
       displayName: body.showName ? await customerDisplayName(shop, pre.customer.shopifyCustomerId || loggedInCustomerId) : null,
       rightsAccepted: true,
+      termsVersion: TERMS_VERSION,
     },
   });
 

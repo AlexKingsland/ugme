@@ -49,6 +49,13 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      # Social Wall's legal details, shown in the customer Submission Terms
+      - key: SW_LEGAL_NAME
+        sync: false
+      - key: SW_ADDRESS
+        sync: false
+      - key: SW_PRIVACY_EMAIL
+        sync: false
       # Beta on development stores: test charges + count test orders in analytics.
       # Set both to "false" before real merchants install from the App Store.
       - key: BILLING_TEST

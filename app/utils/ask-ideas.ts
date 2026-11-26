@@ -8,7 +8,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
     asks: [
       "Show us your morning cup: how do you take it?",
       "Make your go-to drink with it, start to finish.",
-      "Where do you drink it? Show us your favourite spot.",
+      "Where do you drink it? Show us your favorite spot.",
     ],
     questions: ["What's your go-to drink with it?", "How do you take your coffee?"],
   },
@@ -17,10 +17,10 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
     label: "Food & snacks",
     asks: [
       "Show us your first bite, and your honest reaction.",
-      "What do you pair it with? Show us your favourite combo.",
+      "What do you pair it with? Show us your favorite combo.",
       "Show us where it goes with you: desk, hike, road trip.",
     ],
-    questions: ["What do you pair it with?", "What's your favourite way to eat it?"],
+    questions: ["What do you pair it with?", "What's your favorite way to eat it?"],
   },
   {
     id: "apparel",
@@ -47,7 +47,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
     label: "Pets",
     asks: [
       "Show us your pet trying it for the first time.",
-      "Show us their favourite way to use it, and tell us their name.",
+      "Show us their favorite way to use it, and tell us their name.",
       "Catch the reaction: tail wags, zoomies, happy faces.",
     ],
     questions: ["What's your pet's name?", "What breed are they?"],
@@ -60,7 +60,7 @@ export const ASK_IDEAS: AskIdeaGroup[] = [
       "Show us it in action during your workout.",
       "Show us your setup: what you pack and where it goes.",
     ],
-    questions: ["How far did you go?", "Where's your favourite place to train?"],
+    questions: ["How far did you go?", "Where's your favorite place to train?"],
   },
   {
     id: "home",

@@ -25,8 +25,20 @@ import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
 import { getPlan, type PlanTierKey } from "../../utils/plans";
 
+/** The store's customer-facing email from Shopify, to suggest as the support email. */
+async function shopifyContactEmail(graphql: (q: string) => Promise<Response>): Promise<string> {
+  try {
+    const res = await graphql(`#graphql
+      query SupportEmail { shop { contactEmail } }`);
+    const body: any = await res.json();
+    return String(body?.data?.shop?.contactEmail || "");
+  } catch {
+    return "";
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
 
   const shop = await prisma.shop.findUnique({
     where: { shopDomain: session.shop },
@@ -38,6 +50,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         shopDomain: session.shop,
         brandName: "",
         logoUrl: "",
+        supportEmail: "",
         subscriptionProvider: "SHOPIFY_NATIVE",
         providerConnected: false,
         providerApiKey: "",
@@ -54,6 +67,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopDomain: shop.shopDomain,
       brandName: shop.brandName || "",
       logoUrl: shop.logoUrl || "",
+      // Suggest the store's Shopify contact email until the merchant saves one
+      supportEmail: shop.supportEmail || (await shopifyContactEmail(admin.graphql)),
       subscriptionProvider: shop.subscriptionProvider,
       providerConnected: shop.providerConnected,
       // Mask the API key — only show last 4 chars if it exists
@@ -76,18 +91,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "save-brand") {
     const brandName = formData.get("brandName") as string;
     const logoUrl = formData.get("logoUrl") as string;
+    const rawEmail = String(formData.get("supportEmail") || "").trim();
+    if (rawEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) {
+      return json({ success: false, intent: "save-brand", error: "Enter a valid support email, like help@yourstore.com." });
+    }
+    const supportEmail = rawEmail || null;
 
     await prisma.shop.upsert({
       where: { shopDomain: session.shop },
       update: {
         brandName: brandName || null,
         logoUrl: logoUrl || null,
+        supportEmail,
       },
       create: {
         shopDomain: session.shop,
         accessToken: session.accessToken || "",
         brandName: brandName || null,
         logoUrl: logoUrl || null,
+        supportEmail,
       },
     });
 
@@ -231,6 +253,7 @@ export default function SettingsPage() {
   // Brand fields
   const [brandName, setBrandName] = useState(shop.brandName);
   const [logoUrl, setLogoUrl] = useState(shop.logoUrl);
+  const [supportEmail, setSupportEmail] = useState(shop.supportEmail);
 
   // Provider fields
   const [subscriptionProvider, setSubscriptionProvider] = useState(
@@ -250,8 +273,9 @@ export default function SettingsPage() {
     formData.set("intent", "save-brand");
     formData.set("brandName", brandName);
     formData.set("logoUrl", logoUrl);
+    formData.set("supportEmail", supportEmail);
     submit(formData, { method: "post" });
-  }, [brandName, logoUrl, submit]);
+  }, [brandName, logoUrl, supportEmail, submit]);
 
   const handleSaveRewards = useCallback(() => {
     const formData = new FormData();
@@ -320,7 +344,7 @@ export default function SettingsPage() {
                 <Badge tone={shop.planTier === "FREE" ? undefined : "success"}>{shop.planName}</Badge>
               </InlineStack>
               <Text as="p" tone="subdued">
-                Upgrade your plan to unlock more storage and monthly submissions.
+                Upgrade your plan for more slots (approved posts) and storage.
               </Text>
               <InlineStack align="end">
                 <Link to="/app/settings/billing">
@@ -354,6 +378,16 @@ export default function SettingsPage() {
                 placeholder="https://example.com/logo.png"
                 helpText="Your logo for the share page and emails"
                 autoComplete="off"
+              />
+              <TextField
+                label="Support email for customers"
+                type="email"
+                value={supportEmail}
+                onChange={setSupportEmail}
+                placeholder="help@yourstore.com"
+                helpText="Shown in the Submission Terms, so customers can ask you to remove their content or use their privacy rights."
+                error={actionData?.intent === "save-brand" && actionData.error ? actionData.error : undefined}
+                autoComplete="email"
               />
               <InlineStack align="end">
                 <Button onClick={handleSaveBrand} loading={isSaving}>

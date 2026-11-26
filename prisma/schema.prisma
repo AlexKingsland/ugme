@@ -124,6 +124,7 @@ model Shop {
   planActivatedAt      DateTime?
   brandName            String?
   logoUrl              String?
+  supportEmail         String?              // shown to customers in the Submission Terms (removal requests, privacy)
   pixelActivatedAt     DateTime?            // checkout pixel turned on by the app once; if it's gone later, the merchant removed it
   pixelActivatedApp    String?              // which app (client id) turned it on — the dev app and production app each have their own pixel
   createdAt            DateTime             @default(now())
@@ -218,6 +219,7 @@ model Submission {
   markedUsed    Boolean        @default(false)
   usageTags     String         @default("[]")
   rightsAccepted Boolean       @default(false)
+  termsVersion  String?        // the Submission Terms version the customer agreed to
   rejectionReason String?
   reviewedAt    DateTime?
   reviewNote    String?

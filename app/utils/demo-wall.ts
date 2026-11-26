@@ -41,7 +41,7 @@ const NOTES: Record<DemoTheme, string[]> = {
   ],
   pets: [
     "Biscuit hasn't put it down since it arrived.",
-    "Officially her favourite spot in the house.",
+    "Officially her favorite spot in the house.",
     "Two thumbs (paws) up from Milo.",
     "Zoomies every time I open the box.",
     "He sleeps on it more than I do.",
@@ -50,7 +50,7 @@ const NOTES: Record<DemoTheme, string[]> = {
     "Took it up 1,200 m and it never budged.",
     "Day three on the trail and still comfy.",
     "Rained all morning, stayed bone dry.",
-    "Our favourite loop, 14 km.",
+    "Our favorite loop, 14 km.",
     "Packed light, went far.",
   ],
 };
