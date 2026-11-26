@@ -651,10 +651,10 @@ export default function WallCampaignEditor() {
                 </Text>
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                   <BlockStack gap="300">
-                    <Text as="p">
-                      <b>☐ I agree to the Submission Terms.</b> {terms.summary}
-                    </Text>
-                    <TermsDetails terms={terms} />
+                    <TermsPreviewCheckbox summary={terms.summary} />
+                    <Box paddingInlineStart="600">
+                      <TermsDetails terms={terms} />
+                    </Box>
                   </BlockStack>
                 </Box>
                 {!terms.hasSupportEmail && (
@@ -663,11 +663,13 @@ export default function WallCampaignEditor() {
                     appears in the terms.
                   </Banner>
                 )}
-                <Checkbox
-                  label="I've reviewed the Submission Terms and will honor removal requests within the time they promise"
+                <TopAlignedCheckbox
+                  id="rights-accepted"
                   checked={f.rightsAccepted}
                   onChange={(v) => set("rightsAccepted", v)}
-                />
+                >
+                  I've reviewed the Submission Terms and will honor removal requests within the time they promise
+                </TopAlignedCheckbox>
               </BlockStack>
             </Card>
               </>
@@ -882,5 +884,29 @@ function TermsDetails({ terms }: { terms: { version: string; full: { intro: stri
         </div>
       )}
     </BlockStack>
+  );
+}
+
+/** The customer's checkbox, as a working preview (it only toggles here; nothing is saved). */
+function TermsPreviewCheckbox({ summary }: { summary: string }) {
+  const [checked, setChecked] = useState(false);
+  return (
+    <TopAlignedCheckbox id="terms-preview" checked={checked} onChange={setChecked}>
+      I agree to the <b>Submission Terms</b>. {summary}
+    </TopAlignedCheckbox>
+  );
+}
+
+/** A checkbox that sits beside the first line of a long label (Polaris centers it on the whole block). */
+function TopAlignedCheckbox({ id, checked, onChange, children }: { id: string; checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+      <div style={{ flex: "0 0 auto", marginTop: 1 }}>
+        <Checkbox id={id} label="" labelHidden checked={checked} onChange={onChange} />
+      </div>
+      <label htmlFor={id} style={{ cursor: "pointer", flex: 1, minWidth: 0 }}>
+        <Text as="span" variant="bodyMd">{children}</Text>
+      </label>
+    </div>
   );
 }
